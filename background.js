@@ -7,7 +7,8 @@ import {
 } from './energyscore.js';
 
 import {
-    initDB, writeTabCycle, writeSessionMeta, pruneOldSessions, writeSuspendEvent
+    initDB, writeTabCycle, writeSessionMeta, pruneOldSessions, writeSuspendEvent,
+    updateDomainPattern // PHASE 3
 } from './storage.js';
 
 // ============================================================================
@@ -34,6 +35,12 @@ let totalCO2g = 0;
 const networkBytes = new Map();
 let prevCpuInfo = null;
 const sleepingTabs = new Set();
+
+// PHASE 3 — Protect Mode + Budget + Notifications state
+let protectedTabs = [];                          // loaded from chrome.storage.local
+let notifiedBatteryCritical = false;              // fire once per session
+let lastBudgetNotificationTime = 0;              // throttle to 1 per 5 min
+const batteryHistory = [];                       // last 5 battery readings for drain rate
 
 // ============================================================================
 // TOP-LEVEL LISTENERS — registered synchronously before any async work
@@ -90,6 +97,12 @@ async function initialize() {
     } catch (e) {
         console.warn('TabVolt: DB init failed', e);
     }
+
+    // PHASE 3 — load protected tabs from persistent storage
+    try {
+        const stored = await chrome.storage.local.get('protectedTabs');
+        protectedTabs = stored.protectedTabs || [];
+    } catch (_) { protectedTabs = []; }
 
     chrome.alarms.clearAll(() => {
         chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
@@ -195,6 +208,9 @@ async function runPollCycle() {
                 ? Math.round((weight / totalWeight) * 100 * 10) / 10 : 0;
             const tabRamEstMB = Math.round(usedRamMB * (weight / (totalWeight || 1)) * 0.6);
 
+            // PHASE 3 — check if tab is protected or preemptive
+            const isProtected = isTabProtected(tab.id, domain);
+
             tabPayloads.push({
                 tabId: tab.id, title: tab.title || 'Untitled',
                 url: tab.url || '', domain, favicon: tab.favIconUrl || '',
@@ -210,7 +226,9 @@ async function runPollCycle() {
                 pinned: tab.pinned || false,
                 browser_cpu_share: browserCpuShare,
                 browser_ram_share: tabRamSharePct,
-                memory_mb: tabRamEstMB
+                memory_mb: tabRamEstMB,
+                is_protected: isProtected,   // PHASE 3
+                preemptive_flag: false        // PHASE 3 — updated below after pattern learning
             });
 
             dbRecords.push({
@@ -278,6 +296,31 @@ async function runPollCycle() {
             });
         } catch (_) { }
 
+        // PHASE 3 — Pattern Learning: update domain_patterns for each tab
+        try {
+            for (const t of tabPayloads) {
+                if (!t.domain || t.state === 'suspended') continue;
+                const returned = t.is_active;
+                await updateDomainPatternWithIdle(db, t.domain, returned, t.idle_mins || 0);
+            }
+            // Read back preemptive flags and attach to payloads
+            if (db) {
+                const tx = db.transaction('domain_patterns', 'readonly');
+                const store = tx.objectStore('domain_patterns');
+                for (const t of tabPayloads) {
+                    if (!t.domain) continue;
+                    try {
+                        const rec = await new Promise((res, rej) => {
+                            const r = store.get(t.domain);
+                            r.onsuccess = () => res(r.result);
+                            r.onerror = () => res(null);
+                        });
+                        if (rec) t.preemptive_flag = rec.preemptive_flag || false;
+                    } catch (_) { }
+                }
+            }
+        } catch (_) { }
+
         // ---- AUTO-SUSPEND: discard idle background tabs (like Edge sleeping tabs) ----
         const AUTO_SUSPEND_IDLE_MINS = 5;
         try {
@@ -286,17 +329,116 @@ async function runPollCycle() {
                 t.state === 'normal' &&
                 !t.audible &&
                 !t.pinned &&
+                !t.is_protected &&        // PHASE 3
                 (t.idle_mins || 0) >= AUTO_SUSPEND_IDLE_MINS
             );
 
             for (const t of autoSuspendCandidates) {
                 try {
-                    // Log the suspend event before discarding
                     await logSuspendEvent(t.tabId, 'auto');
                     await chrome.tabs.discard(t.tabId);
                     sleepingTabs.delete(t.tabId);
                 } catch (_) { }
             }
+        } catch (_) { }
+
+        // PHASE 3 — Energy Budget Mode check
+        try {
+            const budgetData = await chrome.storage.local.get('energyBudget');
+            const budget = budgetData.energyBudget;
+            if (budget) {
+                const remainingMins = (new Date(budget.targetTime).getTime() - now) / 60000;
+                const availablePct = batteryPct - budget.targetPct;
+
+                if (remainingMins <= 0 || availablePct <= 0) {
+                    // Budget complete
+                    await chrome.storage.local.remove('energyBudget');
+                    try {
+                        chrome.notifications.create('budget-complete', {
+                            type: 'basic', iconUrl: 'icons/icon48.png',
+                            title: 'TabVolt — Budget Complete',
+                            message: 'Your energy budget period has ended.'
+                        });
+                    } catch (_) { }
+                    await chrome.storage.session.set({ budget: { active: false } });
+                } else {
+                    // Track battery drain
+                    batteryHistory.push({ pct: batteryPct, time: now });
+                    if (batteryHistory.length > 5) batteryHistory.shift();
+
+                    let drainPctPerMin = 0;
+                    if (batteryHistory.length >= 2) {
+                        const oldest = batteryHistory[0];
+                        const newest = batteryHistory[batteryHistory.length - 1];
+                        const elapsed = (newest.time - oldest.time) / 60000;
+                        if (elapsed > 0) drainPctPerMin = (oldest.pct - newest.pct) / elapsed;
+                    }
+
+                    const projectedDrainPct = drainPctPerMin * remainingMins;
+                    const onTrack = projectedDrainPct <= availablePct;
+                    let lastAction = null;
+
+                    if (!onTrack) {
+                        // Over budget — suspend highest-score tab
+                        const budgetCandidate = tabPayloads
+                            .filter(t => t.is_background && t.state === 'normal' && !t.audible && !t.pinned && !t.is_protected)
+                            .sort((a, b) => b.energyscore - a.energyscore)[0];
+                        if (budgetCandidate) {
+                            try {
+                                await logSuspendEvent(budgetCandidate.tabId, 'budget');
+                                await chrome.tabs.discard(budgetCandidate.tabId);
+                                sleepingTabs.delete(budgetCandidate.tabId);
+                                lastAction = `Suspended "${budgetCandidate.title}"`;
+                            } catch (_) { }
+
+                            // Throttled notification
+                            if (now - lastBudgetNotificationTime > 5 * 60 * 1000) {
+                                lastBudgetNotificationTime = now;
+                                try {
+                                    chrome.notifications.create('budget-exceeded', {
+                                        type: 'basic', iconUrl: 'icons/icon48.png',
+                                        title: 'TabVolt — Budget Action',
+                                        message: 'Tab suspended to stay within your battery budget.'
+                                    });
+                                } catch (_) { }
+                            }
+                        }
+                    }
+
+                    await chrome.storage.session.set({
+                        budget: {
+                            active: true, targetPct: budget.targetPct,
+                            targetTime: budget.targetTime,
+                            remainingMins: Math.round(remainingMins),
+                            onTrack, lastAction
+                        }
+                    });
+                }
+            }
+        } catch (_) { }
+
+        // PHASE 3 — Battery critical notification
+        try {
+            if (batteryPct < 15 && !isCharging && !notifiedBatteryCritical) {
+                notifiedBatteryCritical = true;
+                chrome.notifications.create('battery-critical', {
+                    type: 'basic', iconUrl: 'icons/icon48.png',
+                    title: 'TabVolt — Battery Critical',
+                    message: 'Suspending top drain tabs to extend battery.'
+                });
+                // Auto-suspend top 3
+                const critCandidates = tabPayloads
+                    .filter(t => t.is_background && t.state === 'normal' && !t.audible && !t.pinned && !t.is_protected)
+                    .sort((a, b) => b.energyscore - a.energyscore)
+                    .slice(0, 3);
+                for (const t of critCandidates) {
+                    try {
+                        await logSuspendEvent(t.tabId, 'auto');
+                        await chrome.tabs.discard(t.tabId);
+                    } catch (_) { }
+                }
+            }
+            if (batteryPct > 20) notifiedBatteryCritical = false;
         } catch (_) { }
 
         const newInterval = getAdaptiveInterval(batteryPct, systemCpuPct, isCharging);
@@ -448,6 +590,49 @@ Which single candidate should be suspended first and why?`;
 }
 
 // ============================================================================
+// PHASE 3 — PROTECT MODE HELPERS
+// ============================================================================
+
+function isTabProtected(tabId, domain) {
+    return protectedTabs.some(p => p.tabId === tabId || (domain && p.domain === domain));
+}
+
+// PHASE 3 — Pattern learning with idle average + preemptive flag computation
+async function updateDomainPatternWithIdle(db, domain, returned, idleMins) {
+    if (!db || !domain) return;
+    return new Promise((resolve) => {
+        const tx = db.transaction('domain_patterns', 'readwrite');
+        const store = tx.objectStore('domain_patterns');
+        const req = store.get(domain);
+        req.onsuccess = () => {
+            const existing = req.result;
+            if (existing) {
+                existing.open_count += 1;
+                if (returned) existing.returned_count += 1;
+                existing.avg_idle_mins = existing.avg_idle_mins * 0.9 + idleMins * 0.1;
+                existing.last_seen = Date.now();
+                existing.preemptive_flag = (
+                    existing.open_count >= 5 &&
+                    (existing.returned_count / existing.open_count) < 0.25 &&
+                    existing.avg_idle_mins > 8
+                );
+                store.put(existing);
+            } else {
+                store.add({
+                    domain, open_count: 1,
+                    returned_count: returned ? 1 : 0,
+                    avg_idle_mins: idleMins,
+                    last_seen: Date.now(),
+                    preemptive_flag: false
+                });
+            }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+    });
+}
+
+// ============================================================================
 // SUSPEND EVENT LOGGER
 // ============================================================================
 
@@ -485,6 +670,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         case 'SUSPEND_TAB':
             (async () => {
                 try {
+                    // PHASE 3 — protect check
+                    let domain = ''; try { const t = await chrome.tabs.get(message.tabId); domain = extractDomain(t.url); } catch (_) { }
+                    if (isTabProtected(message.tabId, domain)) { sendResponse({ success: false, error: 'Tab is protected' }); return; }
                     await logSuspendEvent(message.tabId, 'manual');
                     await chrome.tabs.discard(message.tabId);
                     sleepingTabs.delete(message.tabId);
@@ -508,7 +696,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             (async () => {
                 const state = await chrome.storage.session.get(null);
                 const candidates = (state.tabs || [])
-                    .filter(t => t.is_background && t.state === 'normal' && !t.audible && !t.pinned)
+                    .filter(t => t.is_background && t.state === 'normal' && !t.audible && !t.pinned
+                        && !isTabProtected(t.tabId, t.domain)) // PHASE 3
                     .sort((a, b) => b.energyscore - a.energyscore);
                 let suspended = 0;
                 for (const t of candidates) {
@@ -528,6 +717,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         case 'SUSPEND_SPECIFIC':
             (async () => {
                 try {
+                    // PHASE 3 — protect check
+                    let domain = ''; try { const t = await chrome.tabs.get(message.tabId); domain = extractDomain(t.url); } catch (_) { }
+                    if (isTabProtected(message.tabId, domain)) { sendResponse({ success: false, error: 'Tab is protected' }); return; }
                     await logSuspendEvent(message.tabId, 'ai');
                     await chrome.tabs.discard(message.tabId);
                     sleepingTabs.delete(message.tabId);
@@ -544,6 +736,40 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
         case 'GET_AI_SUGGESTION':
             getAISuggestion().then(suggestion => sendResponse({ suggestion }));
+            return true;
+
+        // PHASE 3 — Budget mode handlers
+        case 'SET_BUDGET':
+            (async () => {
+                await chrome.storage.local.set({ energyBudget: { targetPct: message.targetPct, targetTime: message.targetTime, setAt: Date.now() } });
+                sendResponse({ success: true });
+            })();
+            return true;
+
+        case 'CLEAR_BUDGET':
+            (async () => {
+                await chrome.storage.local.remove('energyBudget');
+                await chrome.storage.session.set({ budget: { active: false } });
+                batteryHistory.length = 0;
+                sendResponse({ success: true });
+            })();
+            return true;
+
+        // PHASE 3 — Protect mode handlers
+        case 'SET_PROTECTED':
+            (async () => {
+                protectedTabs.push({ tabId: message.tabId, domain: message.domain, title: message.title, protected_since: Date.now() });
+                await chrome.storage.local.set({ protectedTabs });
+                sendResponse({ success: true });
+            })();
+            return true;
+
+        case 'CLEAR_PROTECTED':
+            (async () => {
+                protectedTabs = protectedTabs.filter(p => p.tabId !== message.tabId && p.domain !== message.domain);
+                await chrome.storage.local.set({ protectedTabs });
+                sendResponse({ success: true });
+            })();
             return true;
 
         default:

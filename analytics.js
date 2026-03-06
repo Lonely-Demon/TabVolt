@@ -578,6 +578,16 @@ async function renderAnalytics() {
         renderSavingsChart(suspendEvents);
         renderTreeSection(stats);
 
+        // PHASE 3 — Savings equivalent card
+        const seVal = document.getElementById('savings-equiv-value');
+        const seDet = document.getElementById('savings-equiv-detail');
+        if (seVal && seDet) {
+            const savedCO2g = stats.savedCO2 || 0;
+            const kmAvoided = (savedCO2g / 1000 / 0.13); // 130g CO2/km
+            seVal.textContent = `${stats.savedMwh.toFixed(1)} mWh saved`;
+            seDet.textContent = `${kmAvoided.toFixed(2)} km of driving avoided`;
+        }
+
     } catch (e) {
         console.error('[TabVolt Analytics] Error:', e);
     }

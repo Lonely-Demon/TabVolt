@@ -13,7 +13,8 @@
     "system.memory",
     "power",
     "scripting",
-    "favicon"
+    "favicon",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

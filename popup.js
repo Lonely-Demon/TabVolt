@@ -140,31 +140,56 @@ function renderTabList(tabs) {
         const favicon = t.favicon || DEFAULT_FAVICON;
         const state = t.state || 'normal';
 
-        const rowClass = state === 'suspended' ? 'tab-row suspended'
-            : state === 'sleeping' ? 'tab-row sleeping' : 'tab-row';
+        // PHASE 3 — protected styling
+        const isProtected = t.is_protected || false;
+        const rowClass = isProtected ? (state === 'suspended' ? 'tab-row suspended protected' : 'tab-row protected')
+            : state === 'suspended' ? 'tab-row suspended'
+                : state === 'sleeping' ? 'tab-row sleeping' : 'tab-row';
 
         let stateBadge = '';
         if (state === 'suspended') stateBadge = '<span class="tab-state-badge state-suspended">Suspended</span>';
         else if (state === 'sleeping') stateBadge = '<span class="tab-state-badge state-sleeping">Sleeping</span>';
         else if (t.audible) stateBadge = `<span class="tab-state-badge state-audible">${ICON_AUDIO}</span>`;
+        else if (isProtected) stateBadge = '<span class="tab-state-badge" style="color:var(--color-accent,#E86A1A);font-size:9px;">Protected</span>';
+
+        // PHASE 3 — preemptive flag badge
+        const preemptiveBadge = (t.preemptive_flag && !isProtected)
+            ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-warn,#F39C12)" stroke-width="2" style="margin-right:2px;flex-shrink:0;" title="Historically ignored — likely safe to suspend"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+            : '';
+
+        // PHASE 3 — score badge dashed border for preemptive
+        const scoreBorderStyle = (t.preemptive_flag && !isProtected)
+            ? `background:${color};border:1px dashed var(--color-warn,#F39C12)`
+            : `background:${color}`;
+
+        // PHASE 3 — shield button + actions
+        const shieldIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4z"/></svg>`;
+        const shieldBtn = (!t.audible && state !== 'suspended')
+            ? `<button class="tab-btn btn-shield" data-tab-id="${t.tabId}" data-domain="${escapeAttr(t.domain || '')}" data-title="${escapeAttr(t.title)}" title="${isProtected ? 'Remove protection' : 'Protect this tab'}" style="color:${isProtected ? 'var(--color-accent,#E86A1A)' : 'var(--text-muted,#999)'}">${shieldIcon}</button>`
+            : '';
 
         let actions = '';
-        if (state === 'normal') {
+        if (isProtected) {
+            actions = `<div class="tab-actions">${shieldBtn}</div>`;
+        } else if (state === 'normal') {
             actions = `<div class="tab-actions">
+        ${shieldBtn}
         <button class="tab-btn btn-sleep" data-tab-id="${t.tabId}">${ICON_SLEEP}</button>
         ${t.is_background ? `<button class="tab-btn btn-suspend" data-tab-id="${t.tabId}">${ICON_SUSPEND}</button>` : ''}
       </div>`;
         } else if (state === 'sleeping') {
             actions = `<div class="tab-actions">
+        ${shieldBtn}
         <button class="tab-btn btn-wake" data-tab-id="${t.tabId}">${ICON_WAKE}</button>
       </div>`;
         }
 
-        return `<div class="${rowClass}" data-tab-id="${t.tabId}">
+        return `<div class="${rowClass}" data-tab-id="${t.tabId}" ${isProtected ? 'style="border-left:2px solid var(--color-accent,#E86A1A)"' : ''}>
       <img class="tab-favicon" src="${escapeAttr(favicon)}" width="16" height="16" onerror="this.src='${DEFAULT_FAVICON}'">
+      ${preemptiveBadge}
       <span class="tab-title" title="${escapeAttr(t.title)}">${escapeHtml(title)}</span>
       ${stateBadge}
-      <span class="score-badge" style="background:${color}">${Math.round(t.energyscore)}</span>
+      <span class="score-badge" style="${scoreBorderStyle}">${Math.round(t.energyscore)}</span>
       ${actions}
     </div>`;
     }).join('');
@@ -207,17 +232,40 @@ function attachTabActions() {
             e.currentTarget.closest('.tab-row').classList.remove('sleeping');
         });
     });
+    // PHASE 3 — Shield button click handler
+    tabListEl.querySelectorAll('.btn-shield').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const tabId = parseInt(e.currentTarget.dataset.tabId);
+            const domain = e.currentTarget.dataset.domain || '';
+            const title = e.currentTarget.dataset.title || '';
+            const t = tabDataMap.get(tabId);
+            const isProtected = t?.is_protected || false;
+            const msgType = isProtected ? 'CLEAR_PROTECTED' : 'SET_PROTECTED';
+            chrome.runtime.sendMessage({ type: msgType, tabId, domain, title }, () => {
+                loadAndRender(); // refresh to reflect new state
+            });
+        });
+    });
 }
 
 function renderFooter(session, poll) {
     if (session) {
         footerMwh.textContent = `Session: ${(session.total_mwh || 0).toFixed(1)} mWh`;
-        footerCo2.textContent = `${(session.total_co2_grams || 0).toFixed(1)} g CO₂`;
+        // PHASE 3 — contextual CO₂ display
+        footerCo2.textContent = formatCO2(session.total_co2_grams || 0);
     }
     if (poll?.last_updated) {
         const ago = Math.round((Date.now() - poll.last_updated) / 1000);
         footerRam.textContent = `Updated: ${ago}s ago`;
     }
+}
+
+// PHASE 3 — Contextual CO₂ formatting
+function formatCO2(grams) {
+    if (grams < 10) return `${grams.toFixed(1)}g CO₂`;
+    if (grams < 80) return `${grams.toFixed(0)}g CO₂ · ${(grams / 80).toFixed(1)} kettles ☕`;
+    return `${(grams / 1000 / 0.13).toFixed(2)}km driven 🚗`;
 }
 
 // ============================================================================
@@ -261,6 +309,31 @@ async function loadAndRender() {
     renderTabList(data.tabs);
     renderHeatmap(data.heatmap_buffer); // PHASE 2
     renderFooter(data.session, data.poll);
+
+    // PHASE 3 — Budget status bar
+    const budgetStatus = document.getElementById('budget-status');
+    const budgetBar = document.getElementById('budget-bar');
+    const budgetLabel = document.getElementById('budget-label');
+    const btnSetBudget = document.getElementById('btn-set-budget');
+    const btnClearBudget = document.getElementById('btn-clear-budget');
+    if (data.budget?.active) {
+        budgetStatus.style.display = 'block';
+        if (btnSetBudget) btnSetBudget.style.display = 'none';
+        if (btnClearBudget) btnClearBudget.style.display = 'block';
+        const batt = data.system?.battery_pct || 100;
+        const target = data.budget.targetPct || 20;
+        const pct = Math.max(0, Math.min(100, ((batt - target) / (100 - target)) * 100));
+        budgetBar.style.width = pct + '%';
+        if (pct > 40) budgetBar.style.background = 'var(--color-ok,#27AE60)';
+        else if (pct > 15) budgetBar.style.background = 'var(--color-warn,#F39C12)';
+        else budgetBar.style.background = 'var(--color-crit,#C0392B)';
+        budgetLabel.textContent = `${data.budget.onTrack ? '✅ On track' : '⚠️ Over budget'} — ${data.budget.remainingMins || 0}m remaining — target: ${target}%`;
+        if (data.budget.lastAction) budgetLabel.textContent += ` — ${data.budget.lastAction}`;
+    } else {
+        if (budgetStatus) budgetStatus.style.display = 'none';
+        if (btnSetBudget) btnSetBudget.style.display = 'block';
+        if (btnClearBudget) btnClearBudget.style.display = 'none';
+    }
 }
 
 // ============================================================================
@@ -528,4 +601,43 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAndRender();
     setInterval(loadAndRender, 3000);
     checkCompanion();
+
+    // PHASE 3 — Budget section collapse/expand
+    const budgetHeader = document.getElementById('budget-header');
+    const budgetControls = document.getElementById('budget-controls');
+    const budgetArrow = document.getElementById('budget-toggle-arrow');
+    if (budgetHeader) {
+        budgetHeader.addEventListener('click', () => {
+            const show = budgetControls.style.display === 'none';
+            budgetControls.style.display = show ? 'block' : 'none';
+            budgetArrow.innerHTML = show ? '&#9650;' : '&#9660;';
+        });
+    }
+
+    // PHASE 3 — Set budget
+    const btnSetBudget = document.getElementById('btn-set-budget');
+    if (btnSetBudget) {
+        btnSetBudget.addEventListener('click', () => {
+            const pctInput = document.getElementById('budget-target-pct');
+            const timeInput = document.getElementById('budget-target-time');
+            const targetPct = parseInt(pctInput?.value);
+            const targetTimeStr = timeInput?.value;
+            if (!targetPct || targetPct < 10 || targetPct > 90 || !targetTimeStr) return;
+            // Build today's date with the target time
+            const [h, m] = targetTimeStr.split(':').map(Number);
+            const targetDate = new Date();
+            targetDate.setHours(h, m, 0, 0);
+            if (targetDate.getTime() <= Date.now()) targetDate.setDate(targetDate.getDate() + 1);
+            chrome.runtime.sendMessage({ type: 'SET_BUDGET', targetPct, targetTime: targetDate.toISOString() });
+            pctInput.value = ''; timeInput.value = '';
+        });
+    }
+
+    // PHASE 3 — Clear budget
+    const btnClearBudget = document.getElementById('btn-clear-budget');
+    if (btnClearBudget) {
+        btnClearBudget.addEventListener('click', () => {
+            chrome.runtime.sendMessage({ type: 'CLEAR_BUDGET' });
+        });
+    }
 });

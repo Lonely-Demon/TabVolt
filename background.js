@@ -15,7 +15,7 @@ import {
 // CONFIGURATION
 // ============================================================================
 
-const OPENROUTER_KEY = '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';
+const OPENROUTER_KEY = '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';
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const AI_MODEL = 'arcee-ai/trinity-large-preview:free';
 

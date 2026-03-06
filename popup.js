@@ -263,9 +263,10 @@ function renderFooter(session, poll) {
 
 // PHASE 3 — Contextual CO₂ formatting
 function formatCO2(grams) {
-    if (grams < 10) return `${grams.toFixed(1)}g CO₂`;
-    if (grams < 80) return `${grams.toFixed(0)}g CO₂ · ${(grams / 80).toFixed(1)} kettles ☕`;
-    return `${(grams / 1000 / 0.13).toFixed(2)}km driven 🚗`;
+    if (grams < 1) return `${grams.toFixed(2)}g CO₂`;
+    const km = (grams / 1000 / 0.13);
+    if (km < 0.01) return `${grams.toFixed(1)}g CO₂`;
+    return `${grams.toFixed(1)}g CO₂ · ${km.toFixed(3)}km 🚗`;
 }
 
 // ============================================================================

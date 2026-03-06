@@ -98,6 +98,28 @@
     <div style="color:#666; font-size:10px;">Run as Administrator for CPU temperature.</div>
   </div>
 
+  <!-- AI API KEY SETTINGS -->
+  <div id="ai-settings" style="padding:0 12px;">
+    <div id="ai-settings-header"
+      style="font-size:10px; font-weight:700; color:var(--text-muted,#999); text-transform:uppercase; letter-spacing:0.5px; cursor:pointer; display:flex; align-items:center; gap:4px; padding:4px 0;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round">
+        <path
+          d="M12 3l1.912 5.813a2 2 0 001.275 1.275L21 12l-5.813 1.912a2 2 0 00-1.275 1.275L12 21l-1.912-5.813a2 2 0 00-1.275-1.275L3 12l5.813-1.912a2 2 0 001.275-1.275L12 3z" />
+      </svg>
+      AI Settings
+      <span id="ai-key-status" style="margin-left:auto; font-size:9px; font-weight:400;"></span>
+    </div>
+    <div id="ai-settings-body" style="display:none; padding:4px 0 8px;">
+      <div style="display:flex; gap:4px; align-items:center;">
+        <input type="password" id="groq-key-input" placeholder="Groq API key (gsk_...)"
+          style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:5px 8px; color:#F0F0F0; font-size:10px; font-family:monospace; outline:none;">
+        <button id="btn-save-key" class="btn btn-small" style="white-space:nowrap;">Save</button>
+      </div>
+      <div style="font-size:9px; color:#666; margin-top:4px;">Get a free key at <a href="https://console.groq.com/keys"
+          style="color:var(--color-accent,#E86A1A);">console.groq.com/keys</a></div>
+    </div>
+  </div>
   <!-- TAB LIST -->
   <div id="tab-list-container">
     <div id="tab-list">

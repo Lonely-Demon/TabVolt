@@ -15,9 +15,8 @@ import {
 // CONFIGURATION
 // ============================================================================
 
-const OPENROUTER_KEY = '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';
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const AI_MODEL = 'arcee-ai/trinity-large-preview:free';
+const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const AI_MODEL = 'llama-3.1-8b-instant';
 
 // ============================================================================
 // ALL MODULE-LEVEL STATE — declared first, before any function calls
@@ -554,13 +553,16 @@ ${candidateList}
 Which single candidate should be suspended first and why?`;
 
     try {
-        const res = await fetch(OPENROUTER_ENDPOINT, {
+        // Load API key from storage
+        const keyData = await chrome.storage.local.get('groqApiKey');
+        const apiKey = keyData.groqApiKey;
+        if (!apiKey) return 'No API key configured. Set your Groq key in the extension popup.';
+
+        const res = await fetch(GROQ_ENDPOINT, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENROUTER_KEY}`,
-                'HTTP-Referer': 'https://tabvolt.ext',
-                'X-Title': 'TabVolt'
+                'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
                 model: AI_MODEL,
@@ -578,8 +580,10 @@ Which single candidate should be suspended first and why?`;
             const body = await res.text().catch(() => '');
             console.error('TabVolt AI error:', res.status, body);
             return res.status === 401
-                ? 'AI error: Invalid API key. Check OPENROUTER_KEY in background.js.'
-                : `AI error ${res.status}. Try again.`;
+                ? 'AI error: Invalid API key. Check GROQ_KEY in background.js.'
+                : res.status === 429
+                    ? 'AI rate limited (30 req/min). Try again shortly.'
+                    : `AI error ${res.status}. Try again.`;
         }
         const data = await res.json();
         return data?.choices?.[0]?.message?.content?.trim() || 'No suggestion available.';

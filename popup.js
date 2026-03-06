@@ -641,4 +641,34 @@ document.addEventListener('DOMContentLoaded', () => {
             chrome.runtime.sendMessage({ type: 'CLEAR_BUDGET' });
         });
     }
+
+    // AI Settings — collapse/expand + key management
+    const aiHeader = document.getElementById('ai-settings-header');
+    const aiBody = document.getElementById('ai-settings-body');
+    const aiKeyStatus = document.getElementById('ai-key-status');
+    if (aiHeader && aiBody) {
+        // Show status on load
+        chrome.storage.local.get('groqApiKey', (data) => {
+            aiKeyStatus.textContent = data.groqApiKey ? '✓ Key set' : '⚠ No key';
+            aiKeyStatus.style.color = data.groqApiKey ? 'var(--color-ok,#27AE60)' : 'var(--color-warn,#F39C12)';
+        });
+        aiHeader.addEventListener('click', () => {
+            aiBody.style.display = aiBody.style.display === 'none' ? 'block' : 'none';
+        });
+    }
+    const btnSaveKey = document.getElementById('btn-save-key');
+    if (btnSaveKey) {
+        btnSaveKey.addEventListener('click', () => {
+            const keyInput = document.getElementById('groq-key-input');
+            const key = keyInput?.value?.trim();
+            if (!key) return;
+            chrome.storage.local.set({ groqApiKey: key }, () => {
+                keyInput.value = '';
+                if (aiKeyStatus) {
+                    aiKeyStatus.textContent = '✓ Key saved';
+                    aiKeyStatus.style.color = 'var(--color-ok,#27AE60)';
+                }
+            });
+        });
+    }
 });

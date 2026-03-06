@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>TabVolt — Session History</title>
+    <style>
+        /* Same palette as popup */
+        :root {
+            --bg-app: #0F0F0F;
+            --bg-panel: #1A1A2E;
+            --bg-card: #16162A;
+            --bg-hover: rgba(255, 255, 255, 0.04);
+            --border-muted: rgba(255, 255, 255, 0.05);
+            --border-strong: rgba(255, 255, 255, 0.1);
+            --text-main: #F0F0F0;
+            --text-muted: #AAAAAA;
+            --text-dark: #666666;
+            --color-ok: #27AE60;
+            --color-warn: #F39C12;
+            --color-crit: #C0392B;
+            --color-accent: #E86A1A;
+            --color-power: #FF6B35;
+            --color-co2: #27AE60;
+            --color-cpu: #3498DB;
+            --color-savings: #2ECC71;
+        }
+
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-width: 800px;
+            background: var(--bg-app);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            font-size: 13px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Header */
+        .page-header {
+            padding: 16px 32px;
+            background: linear-gradient(180deg, #141425 0%, var(--bg-panel) 100%);
+            border-bottom: 1px solid var(--border-muted);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .page-header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .page-header h1 svg {
+            color: var(--color-warn);
+        }
+
+        .page-header .subtitle {
+            font-size: 13px;
+            color: var(--color-accent);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .export-btn {
+            margin-left: auto;
+            background: rgba(232, 106, 26, 0.15);
+            color: var(--color-accent);
+            border: 1px solid rgba(232, 106, 26, 0.3);
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .export-btn:hover {
+            background: rgba(232, 106, 26, 0.25);
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 0;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border-muted);
+            padding: 0 32px;
+        }
+
+        .tab-nav-btn {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .tab-nav-btn:hover {
+            color: var(--text-main);
+        }
+
+        .tab-nav-btn.active {
+            color: var(--color-accent);
+            border-bottom-color: var(--color-accent);
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Analytics Page */
+        .analytics-page {
+            padding: 20px 32px;
+        }
+
+        /* Time Range Bar */
+        .time-range-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .time-range-bar label {
+            font-size: 11px;
+            color: var(--text-dark);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .range-pill {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+            border: 1px solid var(--border-muted);
+            border-radius: 12px;
+            padding: 5px 14px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+
+        .range-pill:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+        }
+
+        .range-pill.active {
+            background: rgba(232, 106, 26, 0.2);
+            color: var(--color-accent);
+            border-color: rgba(232, 106, 26, 0.4);
+        }
+
+        /* Stat Cards */
+        .stat-cards {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-muted);
+            border-radius: 8px;
+            padding: 14px 16px;
+            transition: border-color 0.2s;
+        }
+
+        .stat-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .stat-card-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-dark);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .stat-card-value {
+            font-size: 22px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stat-card-unit {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 2px;
+        }
+
+        .stat-power .stat-card-value {
+            color: var(--color-power);
+        }
+
+        .stat-co2 .stat-card-value {
+            color: var(--color-co2);
+        }
+
+        .stat-saved .stat-card-value {
+            color: var(--color-savings);
+        }
+
+        .stat-cpu .stat-card-value {
+            color: var(--color-cpu);
+        }
+
+        .stat-tabs .stat-card-value {
+            color: var(--color-accent);
+        }
+
+        /* Chart Grid */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .chart-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-muted);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .chart-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .chart-title .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .chart-canvas-wrap {
+            position: relative;
+            width: 100%;
+            height: 220px;
+        }
+
+        .chart-canvas-wrap canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* Tree Section */
+        .tree-section {
+            margin-bottom: 20px;
+        }
+
+        .tree-header {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-muted);
+        }
+
+        .tree-header-sub {
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--text-dark);
+            text-transform: none;
+            letter-spacing: 0;
+            margin-top: 4px;
+        }
+
+        .tree-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .tree-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-muted);
+            border-radius: 8px;
+            padding: 20px 24px;
+        }
+
+        .tree-card-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .tree-card-icon svg {
+            display: block;
+        }
+
+        .tree-card-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tree-saved .tree-card-title {
+            color: var(--color-savings);
+        }
+
+        .tree-used .tree-card-title {
+            color: var(--color-warn);
+        }
+
+        .tree-metric {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .tree-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tree-unit {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .tree-saved .tree-value {
+            color: var(--color-savings);
+        }
+
+        .tree-used .tree-value {
+            color: var(--color-warn);
+        }
+
+        .tree-equiv {
+            font-size: 12px;
+            color: var(--text-main);
+            margin-bottom: 8px;
+        }
+
+        .tree-equiv strong {
+            font-weight: 700;
+        }
+
+        .tree-progress {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            margin: 10px 0 4px;
+            overflow: hidden;
+        }
+
+        .tree-progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .tree-saved .tree-progress-fill {
+            background: var(--color-savings);
+        }
+
+        .tree-used .tree-progress-fill {
+            background: var(--color-warn);
+        }
+
+        .tree-footnote {
+            font-size: 10px;
+            color: var(--text-dark);
+            margin-top: 4px;
+        }
+
+        /* Sessions Page (existing layout) */
+        .sessions-page {
+            display: flex;
+            min-height: calc(100vh - 110px);
+        }
+
+        .sidebar {
+            width: 260px;
+            min-width: 260px;
+            background: var(--bg-panel);
+            border-right: 1px solid var(--border-muted);
+            overflow-y: auto;
+            padding: 12px 0;
+        }
+
+        .sidebar-title {
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .filter-bar {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-muted);
+        }
+
+        .filter-pills {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .filter-pill {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+            border: 1px solid var(--border-muted);
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-size: 10.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+
+        .filter-pill:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+        }
+
+        .filter-pill.active {
+            background: rgba(232, 106, 26, 0.2);
+            color: var(--color-accent);
+            border-color: rgba(232, 106, 26, 0.4);
+        }
+
+        .filter-date-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .filter-date-row label {
+            font-size: 10px;
+            color: var(--text-dark);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .filter-date-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-muted);
+            border-radius: 6px;
+            padding: 4px 8px;
+            color: var(--text-main);
+            font-size: 11px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .filter-date-input:focus {
+            border-color: rgba(232, 106, 26, 0.5);
+        }
+
+        .filter-date-input::-webkit-calendar-picker-indicator {
+            filter: invert(0.7);
+            cursor: pointer;
+        }
+
+        .filter-count {
+            padding: 4px 16px 0;
+            font-size: 10px;
+            color: var(--text-dark);
+        }
+
+        .session-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.15s ease;
+        }
+
+        .session-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .session-item.active {
+            background: rgba(232, 106, 26, 0.08);
+            border-left-color: var(--color-accent);
+        }
+
+        .session-date {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .session-stats {
+            font-size: 10.5px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .session-stats span {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .main-area {
+            flex: 1;
+            padding: 20px 28px;
+            overflow-y: auto;
+        }
+
+        .main-area h2 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        /* Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .data-table th {
+            text-align: left;
+            padding: 8px 10px;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-strong);
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.15s;
+        }
+
+        .data-table th:hover {
+            color: var(--color-accent);
+        }
+
+        .data-table th .sort-arrow {
+            font-size: 9px;
+            margin-left: 3px;
+        }
+
+        .data-table td {
+            padding: 7px 10px;
+            border-bottom: 1px solid var(--border-muted);
+            color: var(--text-main);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .data-table tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        .data-table .summary-row td {
+            font-weight: 700;
+            border-top: 2px solid var(--border-strong);
+            color: var(--color-accent);
+        }
+
+        .empty-msg {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-dark);
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- HEADER -->
+    <div class="page-header">
+        <h1>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            TabVolt
+        </h1>
+        <span class="subtitle">History</span>
+        <button id="btn-export" class="export-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Export
+        </button>
+    </div>
+
+    <!-- TAB NAV -->
+    <div class="tab-nav">
+        <button class="tab-nav-btn active" data-tab="analytics">📊 Analytics</button>
+        <button class="tab-nav-btn" data-tab="sessions">📋 Sessions</button>
+    </div>
+
+    <!-- ===================== ANALYTICS TAB ===================== -->
+    <div id="tab-analytics" class="tab-content active">
+        <div class="analytics-page">
+
+            <!-- Time Range -->
+            <div class="time-range-bar">
+                <label>Range:</label>
+                <button class="range-pill active" data-range="today">Today</button>
+                <button class="range-pill" data-range="7d">7 Days</button>
+                <button class="range-pill" data-range="30d">30 Days</button>
+                <button class="range-pill" data-range="all">All Time</button>
+            </div>
+
+            <!-- Stat Cards -->
+            <div class="stat-cards">
+                <div class="stat-card stat-power">
+                    <div class="stat-card-label">⚡ Power Used</div>
+                    <div class="stat-card-value" id="stat-power-val">—</div>
+                    <span class="stat-card-unit">mWh</span>
+                </div>
+                <div class="stat-card stat-co2">
+                    <div class="stat-card-label">🌍 CO₂ Emitted</div>
+                    <div class="stat-card-value" id="stat-co2-val">—</div>
+                    <span class="stat-card-unit">g</span>
+                </div>
+                <div class="stat-card stat-saved">
+                    <div class="stat-card-label">💾 Power Saved</div>
+                    <div class="stat-card-value" id="stat-power-saved-val">—</div>
+                    <span class="stat-card-unit">mWh</span>
+                </div>
+                <div class="stat-card stat-saved">
+                    <div class="stat-card-label">🌿 CO₂ Saved</div>
+                    <div class="stat-card-value" id="stat-co2-saved-val">—</div>
+                    <span class="stat-card-unit">g</span>
+                </div>
+                <div class="stat-card stat-cpu">
+                    <div class="stat-card-label">📊 Peak CPU</div>
+                    <div class="stat-card-value" id="stat-peak-cpu-val">—</div>
+                    <span class="stat-card-unit">%</span>
+                </div>
+                <div class="stat-card stat-tabs">
+                    <div class="stat-card-label">🗂️ Tabs Monitored</div>
+                    <div class="stat-card-value" id="stat-tabs-val">—</div>
+                    <span class="stat-card-unit">tabs</span>
+                </div>
+            </div>
+
+            <!-- Charts Row 1 -->
+            <div class="chart-grid">
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-power)"></span> Power Usage
+                        Timeline</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-power"></canvas></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-co2)"></span> Carbon
+                        Footprint Timeline</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-co2"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Charts Row 2 -->
+            <div class="chart-grid">
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-cpu)"></span> CPU Usage
+                        Over Time</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-cpu"></canvas></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-accent)"></span> Resource
+                        Distribution</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-domain"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Charts Row 3 -->
+            <div class="chart-grid">
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-crit)"></span> Worst
+                        Offenders</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-offenders"></canvas></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="chart-title"><span class="dot" style="background:var(--color-savings)"></span> Savings
+                        Over Time</div>
+                    <div class="chart-canvas-wrap"><canvas id="chart-savings"></canvas></div>
+                </div>
+            </div>
+
+            <!-- Tree Equivalency -->
+            <div class="tree-section">
+                <div class="tree-header">
+                    Environmental Impact — Tree Equivalency
+                    <div class="tree-header-sub">One mature tree absorbs approximately 59.6 g of CO₂ per day (EPA). Your
+                        carbon footprint is shown relative to this baseline.</div>
+                </div>
+                <div class="tree-grid">
+                    <div class="tree-card tree-saved">
+                        <div class="tree-card-header">
+                            <div class="tree-card-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#2ECC71"
+                                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22V8" />
+                                    <path d="M5 12a7 7 0 0 1 14 0" />
+                                    <path d="M8 16a5 5 0 0 1 8 0" />
+                                    <path d="M7 9a6 6 0 0 1 10 0" />
+                                </svg>
+                            </div>
+                            <div class="tree-card-title">Carbon Saved</div>
+                        </div>
+                        <div class="tree-metric">
+                            <div class="tree-value" id="tree-saved-val">0.00</div>
+                            <div class="tree-unit">g CO₂ saved</div>
+                        </div>
+                        <div class="tree-equiv" id="tree-saved-equiv">
+                            Equivalent to <strong>0%</strong> of a tree's daily carbon absorption
+                        </div>
+                        <div class="tree-progress">
+                            <div class="tree-progress-fill" id="tree-saved-bar" style="width:0%"></div>
+                        </div>
+                        <div class="tree-footnote">By suspending idle tabs, TabVolt prevented this much CO₂ from being
+                            emitted.</div>
+                    </div>
+                    <div class="tree-card tree-used">
+                        <div class="tree-card-header">
+                            <div class="tree-card-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#F39C12"
+                                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22V8" />
+                                    <path d="M5 12a7 7 0 0 1 14 0" />
+                                    <path d="M7 9a6 6 0 0 1 10 0" />
+                                    <line x1="4" y1="4" x2="20" y2="20" stroke-opacity="0.4" />
+                                </svg>
+                            </div>
+                            <div class="tree-card-title">Carbon Emitted</div>
+                        </div>
+                        <div class="tree-metric">
+                            <div class="tree-value" id="tree-used-val">0.00</div>
+                            <div class="tree-unit">g CO₂ emitted</div>
+                        </div>
+                        <div class="tree-equiv" id="tree-used-equiv">
+                            Requires <strong>0%</strong> of a tree's daily work to offset
+                        </div>
+                        <div class="tree-progress">
+                            <div class="tree-progress-fill" id="tree-used-bar" style="width:0%"></div>
+                        </div>
+                        <div class="tree-footnote">Total carbon footprint from your browsing activity in this period.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== SESSIONS TAB ===================== -->
+    <div id="tab-sessions" class="tab-content">
+        <div class="sessions-page">
+            <div class="sidebar">
+                <div class="sidebar-title">Sessions</div>
+                <div class="filter-bar">
+                    <div class="filter-pills">
+                        <button class="filter-pill active" data-range="all">All</button>
+                        <button class="filter-pill" data-range="today">Today</button>
+                        <button class="filter-pill" data-range="7d">7 Days</button>
+                        <button class="filter-pill" data-range="30d">30 Days</button>
+                    </div>
+                    <div class="filter-date-row">
+                        <label>Date</label>
+                        <input type="date" id="filter-date" class="filter-date-input" title="Filter by specific date">
+                    </div>
+                </div>
+                <div id="filter-count" class="filter-count"></div>
+                <div id="session-list">
+                    <p class="empty-msg" style="padding:20px;font-size:12px;">Loading…</p>
+                </div>
+            </div>
+            <div class="main-area">
+                <h2 id="detail-title">Select a session</h2>
+                <div id="detail-content">
+                    <p class="empty-msg">Choose a session from the sidebar to view details.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="chart.min.js"></script>
+    <script src="analytics.js"></script>
+    <script src="history.js"></script>
+</body>
+
+</html>

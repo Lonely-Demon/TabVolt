@@ -297,6 +297,8 @@ function renderTabList(tabs) {
     } else {
         emptyEl.hidden = true;
     }
+
+    refreshOpenTooltip();
 }
 
 // ---- Row action delegation (one listener for every button) ----
@@ -396,16 +398,19 @@ $('tab-list-container').addEventListener('mouseover', (e) => {
 $('tab-list-container').addEventListener('mouseleave', hideTooltip);
 $('tab-list-container').addEventListener('scroll', hideTooltip, { passive: true });
 
-function showTooltip(rowEl, tabId) {
-    const t = currentTabs.find(x => x.tabId === tabId);
-    if (!t || t.state === 'suspended' || !rowEl.isConnected) return;
-
+function populateTooltipText(t) {
     $('tt-title').textContent = t.title;
     $('tt-cpu').textContent = `${t.cpu_pct}% · ${t.browser_cpu_share}% of browser`;
     $('tt-ram').textContent = `${t.ram_pct ?? 0}% · ${t.browser_mem_share ?? 0}% of browser`;
     $('tt-net').textContent = formatKB(t.kb_transferred);
     $('tt-idle').textContent = formatIdle(t.idle_mins);
+}
 
+function showTooltip(rowEl, tabId) {
+    const t = currentTabs.find(x => x.tabId === tabId);
+    if (!t || t.state === 'suspended' || !rowEl.isConnected) return;
+
+    populateTooltipText(t);
     tooltipPanel.hidden = false;
     const rowRect = rowEl.getBoundingClientRect();
     const panelRect = tooltipPanel.getBoundingClientRect();
@@ -415,6 +420,22 @@ function showTooltip(rowEl, tabId) {
     }
     tooltipPanel.style.top = `${Math.max(4, top)}px`;
     tooltipPanel.style.left = `${Math.max(4, window.innerWidth - panelRect.width - 16)}px`;
+}
+
+/**
+ * Keep an already-open tooltip's numbers live across poll cycles. Without
+ * this, the tooltip was a one-time snapshot taken 420ms after hover while
+ * the row underneath kept re-rendering every refresh — leave the mouse in
+ * place across a poll tick and the row and its own tooltip would show two
+ * different values for the identical field on the identical tab.
+ * Text-only: deliberately does not recompute position, so the box doesn't
+ * jump around while you're reading it.
+ */
+function refreshOpenTooltip() {
+    if (tooltipPanel.hidden || hoverTabId === null) return;
+    const t = currentTabs.find(x => x.tabId === hoverTabId);
+    if (!t || t.state === 'suspended') { hideTooltip(); return; }
+    populateTooltipText(t);
 }
 
 function hideTooltip() {

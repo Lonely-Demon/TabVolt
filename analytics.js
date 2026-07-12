@@ -473,7 +473,14 @@ function timelineOptions(unit) {
         maintainAspectRatio: false,
         scales: {
             x: { ticks: { maxTicksLimit: 10, color: '#666' }, grid: { color: 'rgba(255,255,255,0.03)' } },
-            y: { ticks: { color: '#666', callback: v => v + ' ' + unit }, grid: { color: 'rgba(255,255,255,0.03)' } }
+            y: {
+                ticks: {
+                    color: '#666',
+                    // parseFloat strips float dust (5.800000000000001 → 5.8)
+                    callback: v => parseFloat(Number(v).toFixed(4)) + ' ' + unit
+                },
+                grid: { color: 'rgba(255,255,255,0.03)' }
+            }
         },
         plugins: {
             tooltip: { mode: 'index', intersect: false }

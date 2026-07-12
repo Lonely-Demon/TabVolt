@@ -5,7 +5,11 @@
 // when the sort outcome actually differs. No innerHTML wipes on the hot
 // path, so hover states, focus, and scroll position survive every refresh.
 
-import { getScoreTier, getTierColor, formatCO2Mass } from './energyscore.js';
+import { getScoreTier, formatCO2Mass } from './energyscore.js';
+
+// Brightened tier colors for text-on-tint chips (the locked palette hexes
+// are tuned for solid fills and read too dark as text on dark surfaces).
+const TIER_TEXT_COLOR = { high: '#FF6E5E', mid: '#FFB020', low: '#3DDC84' };
 
 // ============================================================================
 // CONSTANTS + HELPERS
@@ -15,7 +19,7 @@ const REFRESH_MS = 2000;
 const COMPANION_URL = 'http://127.0.0.1:9001/metrics';
 
 const DEFAULT_FAVICON = 'data:image/svg+xml,' + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%238A90A6" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>'
 );
 
 const ICON_SLEEP = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`;
@@ -199,8 +203,13 @@ function updateRow(row, t) {
 
     const scoreText = String(Math.round(t.energyscore));
     if (prev.scoreText !== scoreText) { cells.score.textContent = scoreText; prev.scoreText = scoreText; }
-    const color = getTierColor(getScoreTier(t.energyscore));
-    if (prev.scoreColor !== color) { cells.score.style.background = color; prev.scoreColor = color; }
+    // Tinted chip: 14%-alpha background of the tier color, full color text.
+    const color = TIER_TEXT_COLOR[getScoreTier(t.energyscore)] || '#AAB0C0';
+    if (prev.scoreColor !== color) {
+        cells.score.style.background = color + '24';
+        cells.score.style.color = color;
+        prev.scoreColor = color;
+    }
     const pre = t.preemptive_flag && !t.is_protected;
     if (prev.scorePre !== pre) { cells.score.classList.toggle('preemptive', pre); prev.scorePre = pre; }
 
@@ -462,7 +471,7 @@ function renderBudget(budget, system) {
 
 function renderFooter(session) {
     if (!session) return;
-    setText('footer-mwh', `${(session.total_mwh || 0).toFixed(1)} mWh`);
+    setText('tile-energy-val', (session.total_mwh || 0).toFixed(1));
     setText('footer-co2', formatCO2(session.total_co2_grams || 0));
 }
 
@@ -569,7 +578,7 @@ function renderHeatmap(buffer) {
             const dataIdx = col - (cols - entry.scores.length);
             const x = labelW + col * (cellW + gapX);
             ctx.fillStyle = (dataIdx < 0 || dataIdx >= entry.scores.length)
-                ? '#1D1D35'
+                ? '#20202E'
                 : scoreToColor(entry.scores[dataIdx]);
             ctx.fillRect(x, y, cellW, cellH);
         }
@@ -581,9 +590,9 @@ function drawLetterCircle(ctx, entry, y, labelW, cellH) {
     const cy = y + cellH / 2;
     ctx.beginPath();
     ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-    ctx.fillStyle = '#24243F';
+    ctx.fillStyle = '#2A2A3C';
     ctx.fill();
-    ctx.fillStyle = '#E86A1A';
+    ctx.fillStyle = '#F0742A';
     ctx.font = 'bold 8px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

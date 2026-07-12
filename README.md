@@ -35,6 +35,15 @@
 2. Open the TabVolt popup → gear icon → **AI suggestions** → paste the key → Save.
    The key is stored in `chrome.storage.local` on your machine and is only ever sent to Groq.
 
+**Developing TabVolt and tired of re-pasting the key?** `chrome.storage.local`
+survives clicking **Reload** on the extension card, but Chrome wipes it if you
+**Remove** the extension and "Load unpacked" again — that's a full uninstall,
+not a refresh. If your workflow is the latter, copy `config.local.example.json`
+to `config.local.json` (already git-ignored, never committed) and paste your
+key there instead; the extension seeds it into storage automatically on first
+run whenever storage is empty, without touching a key you've since changed in
+the popup.
+
 ### 3. Optional: hardware companion (Windows)
 
 The companion binary is **not** checked into the repo — build it once from source:

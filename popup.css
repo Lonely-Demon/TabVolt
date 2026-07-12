@@ -74,27 +74,38 @@
   display: none !important;
 }
 
-html,
+/* Chrome sizes the actual popup window to exactly match this document's
+   box — there's no separate "window frame" to style. To get a rounded
+   popup instead of a hard rectangle, html must be transparent (so nothing
+   paints in the corners the radius cuts away) and carry the radius +
+   clipping itself; body then paints the real app background inside that
+   already-rounded shape. */
+html {
+  width: 400px;
+  background: transparent;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
 body {
   width: 400px;
+  max-height: 600px;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: 12px;
   line-height: 1.45;
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
-}
-
-body {
-  max-height: 600px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px;
   position: relative;
+  overflow-x: hidden;
   /* The settings drawer can push content past Chrome's 600px popup cap —
-     the page itself must scroll, or the footer becomes unreachable. */
+     the page itself must scroll, or the footer becomes unreachable.
+     overflow-y: auto clips to html's rounded corners just as well as
+     overflow: hidden would, while still allowing that internal scroll. */
   overflow-y: auto;
 }
 

@@ -152,6 +152,40 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // ============================================================================
+// LOCAL DEV CONVENIENCE — optional, never committed, never required
+// ============================================================================
+
+/**
+ * Seed the Groq API key from an optional `config.local.json` on first run
+ * only (i.e. whenever chrome.storage.local has none saved yet). That file is
+ * git-ignored and lives only on your disk, so unlike chrome.storage.local —
+ * which Chrome wipes when you *remove* the extension, as opposed to just
+ * clicking "Reload" — it survives a full remove-and-"Load unpacked" cycle.
+ * Purely a convenience for local development; the popup's Settings drawer
+ * works exactly the same with or without this file, and it never overwrites
+ * a key you've already set or changed there.
+ *
+ * Uses fetch(), not an ES import: dynamic import() is disallowed inside a
+ * service worker by the HTML spec, and a static import of a file that may
+ * not exist would fail the whole service worker's module graph to load.
+ */
+async function seedLocalDevApiKey() {
+    try {
+        const existing = await chrome.storage.local.get('groqApiKey');
+        if (existing.groqApiKey) return;
+        const res = await fetch(chrome.runtime.getURL('config.local.json'));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.groqApiKey) {
+            await chrome.storage.local.set({ groqApiKey: data.groqApiKey });
+        }
+    } catch (_) {
+        // Normal for most installs — config.local.json is optional and
+        // git-ignored, so it usually doesn't exist.
+    }
+}
+
+// ============================================================================
 // INITIALIZE — idempotent; safe to call from every entry point
 // ============================================================================
 
@@ -174,6 +208,8 @@ async function doInitialize() {
         protectedTabs = stored.protectedTabs || [];
         settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
     } catch (_) { protectedTabs = []; }
+
+    await seedLocalDevApiKey();
 
     // Restore session state so an SW restart continues the same session.
     try {

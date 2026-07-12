@@ -119,6 +119,22 @@ stage 2 is always a split, never a per-tab measurement — real stage-1 data
 narrows the gap, it doesn't close it. The drawer's "Browser" line under
 Enhanced Mode tells you which stage 1 you're currently getting.
 
+**Why not close stage 2 too, since the companion is a native binary?**
+Considered and deliberately not pursued. Chrome's DevTools Protocol
+(`SystemInfo.getProcessInfo` + `Target.getTargets`) can, in principle, give
+an external process real tab↔process data without needing `chrome.processes`
+at all — CDP access isn't gated by extension permissions. But it only works
+if Chrome is *launched* with `--remote-debugging-port` from the start;
+there's no way to switch it on for an already-running browser. That means
+trading "run one optional helper" for "always open Chrome a special way,"
+plus reopening a real security tradeoff Chrome has deliberately made harder
+over the years (an open local debug port is a known attack surface). And
+even then, site isolation means one tab can span multiple renderer
+processes, so the mapping still isn't perfectly 1:1 — the same nuance
+`chrome.processes` itself has. Not worth the cost for a still-imperfect
+result; this applies to every Chromium-based browser (Edge, Brave, etc.)
+identically, since it's a platform-level restriction, not a Chrome-brand one.
+
 This also means TabVolt's numbers won't track Task Manager's tick-by-tick —
 partly because per-tab attribution is inherently approximate, and partly
 because polling is deliberately adaptive (5–20 s depending on battery/CPU/

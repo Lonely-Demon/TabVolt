@@ -28,7 +28,9 @@ export function computeEnergyScore(cpu_pct, idle_mins, kb_per_cycle, is_backgrou
   const idleTerm = unit(idle_mins / IDLE_SATURATION_MINS);
   const bgTerm = is_background ? 1 : 0;
   const raw = 100 * (0.55 * cpuTerm + 0.20 * netTerm + 0.15 * idleTerm + 0.10 * bgTerm);
-  return Math.max(0, Math.min(100, raw));
+  // Round to 2 decimals: kills float dust (100×0.55 = 55.000000000000006)
+  // so equal inputs always produce the exact same score.
+  return Math.max(0, Math.min(100, Math.round(raw * 100) / 100));
 }
 
 /**
@@ -67,9 +69,23 @@ export const GRID_KG_CO2_PER_KWH = 0.82;
 
 /**
  * Convert mWh to grams CO₂ using the grid factor above.
+ * 1 kWh = 1,000,000 mWh, and 0.82 kg/kWh = 820 g/kWh, so:
+ *   grams = (mwh / 1e6) × 820 = mwh × 0.00082
+ * (An earlier version divided by 1000 instead of 1e6 — treating Wh as
+ * kWh — and overstated every CO₂ figure by 1000×.)
  */
 export function estimateCO2g(mwh) {
-  return (mwh / 1000) * GRID_KG_CO2_PER_KWH * 1000;
+  return (mwh / 1e6) * GRID_KG_CO2_PER_KWH * 1000;
+}
+
+/**
+ * Format a CO₂ mass in grams with a sensible unit (mg / g / kg).
+ * Pure string math — shared by popup, history, and analytics.
+ */
+export function formatCO2Mass(grams) {
+  if (grams >= 1000) return (grams / 1000).toFixed(2) + ' kg';
+  if (grams >= 1) return grams.toFixed(2) + ' g';
+  return (grams * 1000).toFixed(1) + ' mg';
 }
 
 /**

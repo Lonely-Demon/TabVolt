@@ -4,6 +4,7 @@
 // Renders Chart.js charts + stat cards + tree equivalency.
 
 import { initDB, getAllRecords, getRecordsSince } from './storage.js';
+import { formatCO2Mass } from './energyscore.js';
 
 // Tree CO2 absorption constant: one mature tree absorbs ~21,770 g CO2/year
 const TREE_CO2_PER_DAY_G = 21770 / 365; // ~59.6 g/day
@@ -120,9 +121,9 @@ function renderStatCards(cycles, suspendEvents, sessions) {
     const tabCount = tabIds.size || sessions.reduce((m, s) => Math.max(m, s.total_tabs_monitored || 0), 0);
 
     setText('stat-power-val', totalMwh.toFixed(1));
-    setText('stat-co2-val', totalCO2.toFixed(2));
+    setText('stat-co2-val', formatGrams(totalCO2));
     setText('stat-power-saved-val', savedMwh.toFixed(1));
-    setText('stat-co2-saved-val', savedCO2.toFixed(2));
+    setText('stat-co2-saved-val', formatGrams(savedCO2));
     setText('stat-peak-cpu-val', peakCPU.toFixed(1));
     setText('stat-tabs-val', tabCount);
 
@@ -162,6 +163,8 @@ function renderPowerTimeline(cycles) {
 
 function renderCO2Timeline(cycles) {
     const data = aggregateTimeline(cycles, 'co2_grams');
+    // Grams per bucket are tiny — chart in milligrams for readable axes.
+    data.values = data.values.map(v => Math.round(v * 1000 * 1000) / 1000);
     destroyChart('chart-co2');
 
     const ctx = document.getElementById('chart-co2').getContext('2d');
@@ -174,7 +177,7 @@ function renderCO2Timeline(cycles) {
         data: {
             labels: data.labels,
             datasets: [{
-                label: 'CO₂ (g)',
+                label: 'CO₂ (mg)',
                 data: data.values,
                 borderColor: '#27AE60',
                 backgroundColor: gradient,
@@ -183,7 +186,7 @@ function renderCO2Timeline(cycles) {
                 tension: 0.3
             }]
         },
-        options: timelineOptions('g')
+        options: timelineOptions('mg')
     });
 }
 
@@ -374,7 +377,7 @@ function renderTreeSection(stats) {
     const { savedCO2, totalCO2 } = stats;
 
     const savedPct = (savedCO2 / TREE_CO2_PER_DAY_G) * 100;
-    setText('tree-saved-val', savedCO2.toFixed(3));
+    setText('tree-saved-val', formatGrams(savedCO2));
     setWidth('tree-saved-bar', Math.min(100, savedPct));
     const savedEquivEl = document.getElementById('tree-saved-equiv');
     if (savedEquivEl) {
@@ -387,7 +390,7 @@ function renderTreeSection(stats) {
     }
 
     const usedPct = (totalCO2 / TREE_CO2_PER_DAY_G) * 100;
-    setText('tree-used-val', totalCO2.toFixed(3));
+    setText('tree-used-val', formatGrams(totalCO2));
     setWidth('tree-used-bar', Math.min(100, usedPct));
     const usedEquivEl = document.getElementById('tree-used-equiv');
     if (usedEquivEl) {
@@ -406,8 +409,10 @@ function renderTreeSection(stats) {
 
 function aggregateTimeline(cycles, field) {
     const buckets = createTimeBuckets(cycles);
+    // 6 decimals: CO₂ bucket sums are micro-scale in grams and would round
+    // to a flat zero line at 3.
     const values = buckets.bucketCycles.map(b =>
-        Math.round(b.reduce((s, c) => s + (c[field] || 0), 0) * 1000) / 1000
+        Math.round(b.reduce((s, c) => s + (c[field] || 0), 0) * 1e6) / 1e6
     );
     return { labels: buckets.labels, values };
 }
@@ -488,6 +493,14 @@ function destroyChart(id) {
 function setText(id, val) {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
+}
+
+/** Adaptive precision for values displayed next to a static "g" unit. */
+function formatGrams(g) {
+    if (g === 0) return '0';
+    if (g >= 1) return g.toFixed(2);
+    if (g >= 0.001) return g.toFixed(4);
+    return g.toFixed(6);
 }
 
 function setWidth(id, pct) {

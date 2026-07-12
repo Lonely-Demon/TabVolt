@@ -355,7 +355,7 @@ async function runPollCycle() {
                 idle_mins: round2(idleMins),
                 is_background: isBackground, is_active: tab.active || false,
                 mwh_estimated: round4(mwh),
-                co2_grams: round4(co2),
+                co2_grams: round6(co2),
                 tier, tierColor: getTierColor(tier), state,
                 audible: tab.audible || false,
                 pinned: tab.pinned || false,
@@ -425,7 +425,7 @@ async function runPollCycle() {
                     session_id: session.id, start_time: session.startTime,
                     duration_mins: round1(durationMins),
                     total_mwh: round3(session.totalMwh),
-                    total_co2_grams: round3(session.totalCO2g)
+                    total_co2_grams: round6(session.totalCO2g)
                 },
                 poll: { interval_ms: currentIntervalMs, cycle_count: session.cycleCount, last_updated: now },
                 heatmap_buffer: heatmap,
@@ -492,7 +492,7 @@ async function flushToDB(now) {
             idle_mins: round2(a.idleMax),
             is_background: a.is_background,
             mwh_estimated: round4(a.mwhSum),
-            co2_grams: round4(a.co2Sum),
+            co2_grams: round6(a.co2Sum),
             window_ms: windowMs,
             samples: a.samples
         });
@@ -856,6 +856,9 @@ function round1(n) { return Math.round(n * 10) / 10; }
 function round2(n) { return Math.round(n * 100) / 100; }
 function round3(n) { return Math.round(n * 1000) / 1000; }
 function round4(n) { return Math.round(n * 10000) / 10000; }
+// CO₂ values are tiny in grams (~µg per cycle) — keep 6 decimals so
+// aggregation doesn't round them into zero.
+function round6(n) { return Math.round(n * 1e6) / 1e6; }
 
 // ============================================================================
 // MESSAGE HANDLER

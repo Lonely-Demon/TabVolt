@@ -5,7 +5,7 @@
 // when the sort outcome actually differs. No innerHTML wipes on the hot
 // path, so hover states, focus, and scroll position survive every refresh.
 
-import { getScoreTier, getTierColor } from './energyscore.js';
+import { getScoreTier, getTierColor, formatCO2Mass } from './energyscore.js';
 
 // ============================================================================
 // CONSTANTS + HELPERS
@@ -39,10 +39,9 @@ function formatIdle(mins) {
 }
 
 function formatCO2(grams) {
-    if (grams < 1) return `${grams.toFixed(2)} g CO₂`;
+    const mass = `${formatCO2Mass(grams)} CO₂`;
     const km = grams / 130; // ~130 g CO₂ per km of driving
-    if (km < 0.01) return `${grams.toFixed(1)} g CO₂`;
-    return `${grams.toFixed(1)} g CO₂ · ${km.toFixed(2)} km 🚗`;
+    return km >= 0.01 ? `${mass} · ${km.toFixed(2)} km 🚗` : mass;
 }
 
 const $ = (id) => document.getElementById(id);

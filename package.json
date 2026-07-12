@@ -1,0 +1,10 @@
+{
+  "name": "tabvolt",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Per-tab energy intelligence Chrome extension",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

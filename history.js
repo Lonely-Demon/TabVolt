@@ -2,6 +2,7 @@
 // Pure IndexedDB reads through the shared storage.js layer.
 
 import { initDB, getAllRecords, getSessionCycles } from './storage.js';
+import { formatCO2Mass } from './energyscore.js';
 
 let db = null;
 let allSessions = [];
@@ -75,7 +76,7 @@ function renderSessionList() {
             ? Math.round((s.end_time - s.start_time) / 60000) + 'm'
             : '—';
         const mwh = (s.total_mwh || 0).toFixed(1);
-        const co2 = (s.total_co2_grams || 0).toFixed(1);
+        const co2 = formatCO2Mass(s.total_co2_grams || 0);
         const active = s.session_id === currentSessionId ? ' active' : '';
 
         return `<div class="session-item${active}" data-sid="${s.session_id}">
@@ -83,7 +84,7 @@ function renderSessionList() {
             <div class="session-stats">
                 <span>${duration}</span>
                 <span>${mwh} mWh</span>
-                <span>${co2}g CO₂</span>
+                <span>${co2} CO₂</span>
                 <span>${s.total_tabs_monitored || 0} tabs</span>
             </div>
         </div>`;
@@ -160,7 +161,7 @@ async function loadSessionDetail(sessionId) {
             avgCpu: a.count > 0 ? Math.round((a.cpuSum / a.count) * 10) / 10 : 0,
             totalKB: Math.round(a.kbSum),
             totalMwh: Math.round(a.mwhSum * 1000) / 1000,
-            co2g: Math.round(a.co2Sum * 1000) / 1000,
+            co2g: a.co2Sum,
             idleTime: Math.round(a.idleMax)
         };
     });
@@ -188,7 +189,7 @@ async function loadSessionDetail(sessionId) {
         { key: 'avgCpu', label: 'Avg CPU%' },
         { key: 'totalKB', label: 'Total KB' },
         { key: 'totalMwh', label: 'Total mWh' },
-        { key: 'co2g', label: 'CO₂g' },
+        { key: 'co2g', label: 'CO₂' },
         { key: 'idleTime', label: 'Idle (min)' }
     ];
 
@@ -206,7 +207,7 @@ async function loadSessionDetail(sessionId) {
             <td>${r.avgCpu}%</td>
             <td>${formatKB(r.totalKB)}</td>
             <td>${r.totalMwh.toFixed(3)}</td>
-            <td>${r.co2g.toFixed(3)}</td>
+            <td>${formatCO2Mass(r.co2g)}</td>
             <td>${r.idleTime}m</td>
         </tr>`
     ).join('');
@@ -227,7 +228,7 @@ async function loadSessionDetail(sessionId) {
         <td>${(totals.avgCpu / (rows.length || 1)).toFixed(1)}%</td>
         <td>${formatKB(totals.totalKB)}</td>
         <td>${totals.totalMwh.toFixed(3)}</td>
-        <td>${totals.co2g.toFixed(3)}</td>
+        <td>${formatCO2Mass(totals.co2g)}</td>
         <td>${totals.idleTime}m</td>
     </tr>`;
 

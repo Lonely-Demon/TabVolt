@@ -2,6 +2,10 @@
 
 **TabVolt** is a per-tab energy intelligence Chrome extension. It monitors, ranks, and visualizes the energy and carbon footprint of your browsing in real time — a task manager for tab energy — helping you reclaim system resources and reduce your environmental impact.
 
+| Live tab table | Sleep / protect + tooltip | Analytics |
+|---|---|---|
+| ![Popup](docs/screenshots/popup.png) | ![Badges and tooltip](docs/screenshots/tooltip-badges.png) | ![Analytics](docs/screenshots/analytics.png) |
+
 ## ✨ Features
 
 - **Per-tab energy scoring** — a normalized 0–100 Energy Score for every open tab, weighted across estimated CPU share (55%), network activity (20%), idle time (15%), and background state (10%).

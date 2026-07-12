@@ -5,7 +5,7 @@
 // when the sort outcome actually differs. No innerHTML wipes on the hot
 // path, so hover states, focus, and scroll position survive every refresh.
 
-import { getScoreTier, formatCO2Mass } from './energyscore.js';
+import { getScoreTier, formatCO2Mass, isRestrictedUrl } from './energyscore.js';
 
 // Brightened tier colors for text-on-tint chips (the locked palette hexes
 // are tuned for solid fills and read too dark as text on dark surfaces).
@@ -93,7 +93,7 @@ function renderSystemChips(system) {
 // ============================================================================
 
 function stateSig(t) {
-    return `${t.state}|${t.is_protected}|${t.audible}|${t.preemptive_flag}|${t.is_background}`;
+    return `${t.state}|${t.is_protected}|${t.audible}|${t.preemptive_flag}|${t.is_background}|${isRestrictedUrl(t.url)}`;
 }
 
 function createRow(t) {
@@ -153,6 +153,13 @@ function rebuildBadgesAndActions(row, t) {
         title="${t.is_protected ? 'Remove protection' : 'Protect this tab'}"
         aria-label="${t.is_protected ? 'Remove protection' : 'Protect this tab'}">${ICON_SHIELD}</button>`;
 
+    // Pausing animations requires script injection, which Chrome refuses on
+    // its own internal pages, the Web Store, and similar — omit the button
+    // there instead of surfacing an error after the click.
+    const sleepBtn = isRestrictedUrl(t.url)
+        ? ''
+        : `<button class="tab-btn" data-act="sleep" title="Pause animations" aria-label="Pause animations">${ICON_SLEEP}</button>`;
+
     if (t.state === 'suspended') {
         actionsHtml = '';
     } else if (t.is_protected) {
@@ -161,8 +168,7 @@ function rebuildBadgesAndActions(row, t) {
         actionsHtml = shieldBtn +
             `<button class="tab-btn" data-act="wake" title="Wake tab" aria-label="Wake tab">${ICON_WAKE}</button>`;
     } else {
-        actionsHtml = shieldBtn +
-            `<button class="tab-btn" data-act="sleep" title="Pause animations" aria-label="Pause animations">${ICON_SLEEP}</button>` +
+        actionsHtml = shieldBtn + sleepBtn +
             (t.is_background
                 ? `<button class="tab-btn" data-act="suspend" title="Suspend tab" aria-label="Suspend tab">${ICON_SUSPEND}</button>`
                 : '');

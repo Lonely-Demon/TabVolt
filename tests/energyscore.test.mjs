@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
     computeEnergyScore, getScoreTier, getTierColor,
     estimateMwh, estimateCO2g, formatCO2Mass,
-    getAdaptiveInterval, GRID_KG_CO2_PER_KWH
+    getAdaptiveInterval, GRID_KG_CO2_PER_KWH, isRestrictedUrl
 } from '../energyscore.js';
 
 // ---------------------------------------------------------------------------
@@ -125,4 +125,33 @@ test('moderate and healthy tiers', () => {
 
 test('charging never triggers the emergency tier', () => {
     assert.equal(getAdaptiveInterval(10, 0, true), 5000);
+});
+
+// ---------------------------------------------------------------------------
+// Restricted-page detection — the set of pages Chrome refuses script
+// injection into regardless of host_permissions.
+// ---------------------------------------------------------------------------
+
+test('ordinary https/http pages are not restricted', () => {
+    assert.equal(isRestrictedUrl('https://example.com/page'), false);
+    assert.equal(isRestrictedUrl('http://localhost:3000'), false);
+});
+
+test('about:blank is scriptable — not restricted', () => {
+    assert.equal(isRestrictedUrl('about:blank'), false);
+});
+
+test('internal browser and store pages are restricted', () => {
+    assert.equal(isRestrictedUrl('chrome://settings'), true);
+    assert.equal(isRestrictedUrl('chrome://extensions/'), true);
+    assert.equal(isRestrictedUrl('edge://settings'), true);
+    assert.equal(isRestrictedUrl('devtools://devtools/bundled/inspector.html'), true);
+    assert.equal(isRestrictedUrl('view-source:https://example.com'), true);
+    assert.equal(isRestrictedUrl('https://chromewebstore.google.com/detail/x'), true);
+    assert.equal(isRestrictedUrl('chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.html'), true);
+});
+
+test('no URL yet (tab still loading) counts as restricted', () => {
+    assert.equal(isRestrictedUrl(''), true);
+    assert.equal(isRestrictedUrl(undefined), true);
 });

@@ -7,6 +7,26 @@ function unit(x) {
   return Math.max(0, Math.min(1, x));
 }
 
+// Pages Chrome never allows extensions to inject scripts into, regardless of
+// host_permissions — internal browser UI, the extension store, other
+// extensions' pages, dev tooling. (about:blank is deliberately NOT in this
+// list — it's a real scriptable document.)
+const RESTRICTED_URL_PREFIXES = [
+  'chrome://', 'chrome-extension://', 'edge://', 'chrome-search://',
+  'chrome-untrusted://', 'devtools://', 'view-source:',
+  'https://chrome.google.com/webstore', 'https://chromewebstore.google.com'
+];
+
+/**
+ * True if a tab's URL is one Chrome will refuse `chrome.scripting`
+ * injection on (or has no URL yet, e.g. still loading). Used to hide
+ * script-dependent actions before the user ever hits the resulting error.
+ */
+export function isRestrictedUrl(url) {
+  if (!url) return true;
+  return RESTRICTED_URL_PREFIXES.some(p => url.startsWith(p));
+}
+
 // Saturation points: the input value at which each signal counts as "maxed".
 const CPU_SATURATION_PCT = 50;   // a tab using 50% of system CPU is maxed
 const NET_SATURATION_KB = 512;   // 512 KB transferred in one cycle is maxed

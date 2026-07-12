@@ -14,7 +14,7 @@
 
 import {
     computeEnergyScore, getScoreTier, getTierColor,
-    estimateMwh, estimateCO2g, getAdaptiveInterval
+    estimateMwh, estimateCO2g, getAdaptiveInterval, isRestrictedUrl
 } from './energyscore.js';
 
 import {
@@ -657,11 +657,24 @@ async function suspendTab(tabId, trigger) {
     sleepingTabs.delete(tabId);
 }
 
+/** Translate Chrome's internal scripting errors into something a user can act on. */
+function friendlyScriptError(message) {
+    if (/cannot access contents|extension manifest must request permission/i.test(message)) {
+        return "Chrome doesn't allow extensions to modify this kind of page";
+    }
+    if (/no tab with id/i.test(message)) return 'Tab was closed';
+    return 'Could not modify this tab';
+}
+
 async function sleepTab(tabId) {
+    let info;
     try {
-        const info = await chrome.tabs.get(tabId);
-        if (info.discarded) return { success: false, error: 'Tab is suspended' };
-    } catch (e) { return { success: false, error: e.message }; }
+        info = await chrome.tabs.get(tabId);
+    } catch (e) { return { success: false, error: friendlyScriptError(e.message) }; }
+    if (info.discarded) return { success: false, error: 'Tab is suspended' };
+    if (isRestrictedUrl(info.url)) {
+        return { success: false, error: "Chrome doesn't allow extensions to modify this kind of page" };
+    }
 
     try {
         // MAIN world: patching requestAnimationFrame in the isolated world
@@ -681,7 +694,7 @@ async function sleepTab(tabId) {
         });
         sleepingTabs.add(tabId);
         return { success: true };
-    } catch (e) { return { success: false, error: e.message }; }
+    } catch (e) { return { success: false, error: friendlyScriptError(e.message) }; }
 }
 
 async function wakeTab(tabId) {
@@ -700,7 +713,7 @@ async function wakeTab(tabId) {
         });
         sleepingTabs.delete(tabId);
         return { success: true };
-    } catch (e) { return { success: false, error: e.message }; }
+    } catch (e) { return { success: false, error: friendlyScriptError(e.message) }; }
 }
 
 async function logSuspendEvent(tabId, trigger) {

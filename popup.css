@@ -878,26 +878,6 @@ button {
   padding: 0 2px;
 }
 
-.cell-score {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 2px;
-}
-
-.score-badge {
-  min-width: 32px;
-  text-align: center;
-  padding: 2.5px 7px;
-  border-radius: var(--radius-pill);
-  font-size: 10.5px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-.score-badge.preemptive {
-  box-shadow: 0 0 0 1px var(--warn);
-}
-
 .cell-actions {
   display: flex;
   justify-content: flex-end;

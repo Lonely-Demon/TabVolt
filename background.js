@@ -14,7 +14,8 @@
 
 import {
     computeEnergyScore, getScoreTier, getTierColor,
-    estimateMwh, estimateCO2g, getAdaptiveInterval, isRestrictedUrl
+    estimateMwh, estimateCO2g, getAdaptiveInterval, isRestrictedUrl,
+    computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
 } from './energyscore.js';
 
 import {
@@ -338,20 +339,32 @@ async function runPollCycle() {
         const batteryPct = battery ? battery.pct : null;
         const isCharging = battery ? battery.charging : null;
 
-        // ---- Heuristic per-tab CPU weights ----
+        // ---- Heuristic per-tab CPU and memory weights (single pass) ----
+        // Two independent weight formulas on purpose — memory uses different
+        // signals (media/loading/network, no idle decay) so the RAM column
+        // isn't just a rescaled copy of the CPU column.
         const browserCpuEst = systemCpuPct * 0.6;
+        const browserMemEst = memoryPct * BROWSER_MEM_SHARE_ASSUMPTION;
         const tabWeights = new Map();
+        const memWeights = new Map();
         let totalWeight = 0;
+        let totalMemWeight = 0;
         for (const tab of tabs) {
-            if (tab.discarded) { tabWeights.set(tab.id, 0); continue; }
+            if (tab.discarded) { tabWeights.set(tab.id, 0); memWeights.set(tab.id, 0); continue; }
+            const isLoading = tab.status === 'loading';
+            const netKB = (networkBytes.get(tab.id) || 0) / 1024;
+
             let w = 1;
             if (tab.active) w += 30;
             if (tab.audible) w += 20;
-            if (tab.status === 'loading') w += 15;
-            const netKB = (networkBytes.get(tab.id) || 0) / 1024;
+            if (isLoading) w += 15;
             w += Math.min(netKB / 5, 15);
             tabWeights.set(tab.id, w);
             totalWeight += w;
+
+            const mw = computeMemoryWeight(tab.audible, isLoading, netKB, tab.active);
+            memWeights.set(tab.id, mw);
+            totalMemWeight += mw;
         }
 
         // ---- Per-tab payloads + aggregation (single pass) ----
@@ -359,6 +372,8 @@ async function runPollCycle() {
         for (const tab of tabs) {
             const weight = tabWeights.get(tab.id) || 0;
             const tabCpuPct = totalWeight > 0 ? (weight / totalWeight) * browserCpuEst : 0;
+            const memWeight = memWeights.get(tab.id) || 0;
+            const tabRamPct = (!tab.discarded && totalMemWeight > 0) ? (memWeight / totalMemWeight) * browserMemEst : 0;
             const idleMins = (now - (tab.lastAccessed ?? now)) / 60000;
             const kbThisCycle = (networkBytes.get(tab.id) ?? 0) / 1024;
             networkBytes.delete(tab.id);
@@ -387,6 +402,7 @@ async function runPollCycle() {
                 url: tab.url || '', domain, favicon: tab.favIconUrl || '',
                 energyscore: Math.round(score),
                 cpu_pct: round1(tabCpuPct),
+                ram_pct: round1(tabRamPct),
                 kb_transferred: round2(kbThisCycle),
                 idle_mins: round2(idleMins),
                 is_background: isBackground, is_active: tab.active || false,
@@ -395,10 +411,13 @@ async function runPollCycle() {
                 tier, tierColor: getTierColor(tier), state,
                 audible: tab.audible || false,
                 pinned: tab.pinned || false,
-                // Honest relative shares — per-tab absolute RAM is not
-                // observable without the (Dev-channel-only) processes API.
+                // Both "share of system X" figures a tab is estimated to
+                // account for — neither is a real per-tab measurement.
+                // Chrome Stable doesn't expose that to extensions at all
+                // (see Context/Phase1_Iteration_Log.md); these are heuristic
+                // splits of a real system-wide total, not process readings.
                 browser_cpu_share: browserCpuEst > 0 ? round1((tabCpuPct / browserCpuEst) * 100) : 0,
-                load_share: totalWeight > 0 ? round1((weight / totalWeight) * 100) : 0,
+                browser_mem_share: totalMemWeight > 0 ? round1((memWeight / totalMemWeight) * 100) : 0,
                 is_protected: isTabProtected(tab.id, domain),
                 preemptive_flag: pattern?.preemptive_flag || false
             });

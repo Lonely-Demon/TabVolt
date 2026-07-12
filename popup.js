@@ -5,11 +5,7 @@
 // when the sort outcome actually differs. No innerHTML wipes on the hot
 // path, so hover states, focus, and scroll position survive every refresh.
 
-import { getScoreTier, formatCO2Mass, isRestrictedUrl } from './energyscore.js';
-
-// Brightened tier colors for text-on-tint chips (the locked palette hexes
-// are tuned for solid fills and read too dark as text on dark surfaces).
-const TIER_TEXT_COLOR = { high: '#FF6E5E', mid: '#FFB020', low: '#3DDC84' };
+import { formatCO2Mass, isRestrictedUrl } from './energyscore.js';
 
 // ============================================================================
 // CONSTANTS + HELPERS
@@ -118,19 +114,15 @@ function createRow(t) {
     cpu.className = 'cell-num';
     const net = document.createElement('span');
     net.className = 'cell-num';
-
-    const scoreWrap = document.createElement('span');
-    scoreWrap.className = 'cell-score';
-    const score = document.createElement('span');
-    score.className = 'score-badge';
-    scoreWrap.appendChild(score);
+    const ram = document.createElement('span');
+    ram.className = 'cell-num';
 
     const actions = document.createElement('span');
     actions.className = 'cell-actions';
 
-    el.append(name, cpu, net, scoreWrap, actions);
+    el.append(name, cpu, net, ram, actions);
 
-    const row = { el, cells: { favicon, title, badges, cpu, net, score, actions }, prev: {} };
+    const row = { el, cells: { favicon, title, badges, cpu, net, ram, actions }, prev: {} };
     rowMap.set(t.tabId, row);
     return row;
 }
@@ -207,24 +199,19 @@ function updateRow(row, t) {
         prev.favicon = fav;
     }
 
+    // A leading "~" marks CPU/RAM as relative estimates, not real per-tab
+    // measurements — Chrome doesn't expose that to Stable-channel extensions
+    // (see the column headers' title text for the full explanation). Net is
+    // real per-tab byte-counted data, so it doesn't get the marker.
     const suspended = t.state === 'suspended';
-    const cpuText = suspended ? '—' : `${(t.cpu_pct ?? 0).toFixed(1)}%`;
+    const cpuText = suspended ? '—' : `~${(t.cpu_pct ?? 0).toFixed(1)}%`;
     if (prev.cpuText !== cpuText) { cells.cpu.textContent = cpuText; prev.cpuText = cpuText; }
 
     const netText = suspended ? '—' : formatKB(t.kb_transferred);
     if (prev.netText !== netText) { cells.net.textContent = netText; prev.netText = netText; }
 
-    const scoreText = String(Math.round(t.energyscore));
-    if (prev.scoreText !== scoreText) { cells.score.textContent = scoreText; prev.scoreText = scoreText; }
-    // Tinted chip: 14%-alpha background of the tier color, full color text.
-    const color = TIER_TEXT_COLOR[getScoreTier(t.energyscore)] || '#AAB0C0';
-    if (prev.scoreColor !== color) {
-        cells.score.style.background = color + '24';
-        cells.score.style.color = color;
-        prev.scoreColor = color;
-    }
-    const pre = t.preemptive_flag && !t.is_protected;
-    if (prev.scorePre !== pre) { cells.score.classList.toggle('preemptive', pre); prev.scorePre = pre; }
+    const ramText = suspended ? '—' : `~${(t.ram_pct ?? 0).toFixed(1)}%`;
+    if (prev.ramText !== ramText) { cells.ram.textContent = ramText; prev.ramText = ramText; }
 
     const sig = stateSig(t);
     if (prev.sig !== sig) {
@@ -415,7 +402,7 @@ function showTooltip(rowEl, tabId) {
 
     $('tt-title').textContent = t.title;
     $('tt-cpu').textContent = `${t.cpu_pct}% · ${t.browser_cpu_share}% of browser`;
-    $('tt-share').textContent = `${t.load_share ?? 0}%`;
+    $('tt-ram').textContent = `${t.ram_pct ?? 0}% · ${t.browser_mem_share ?? 0}% of browser`;
     $('tt-net').textContent = formatKB(t.kb_transferred);
     $('tt-idle').textContent = formatIdle(t.idle_mins);
 

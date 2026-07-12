@@ -177,11 +177,13 @@
   <section id="list-card" class="card">
     <div id="list-header">
       <button class="col col-name sortable" data-sort="title">Name<span class="sort-arrow"></span></button>
-      <button class="col col-num sortable" data-sort="cpu_pct" title="Estimated share of system CPU">CPU<span
+      <button class="col col-num sortable" data-sort="cpu_pct"
+        title="Estimated share of system CPU — not a real per-tab measurement. Chrome doesn't expose that to extensions; this is a relative estimate.">CPU<span
           class="sort-arrow"></span></button>
       <button class="col col-num sortable" data-sort="kb_transferred" title="Network transferred last cycle">Net<span
           class="sort-arrow"></span></button>
-      <button class="col col-score sortable" data-sort="energyscore" title="Energy score">Score<span
+      <button class="col col-num sortable" data-sort="ram_pct"
+        title="Estimated share of system memory — not a real per-tab measurement. Chrome doesn't expose that to extensions; this is a relative estimate.">RAM<span
           class="sort-arrow"></span></button>
       <span class="col col-actions" aria-hidden="true"></span>
     </div>
@@ -206,7 +208,7 @@
     <div class="tooltip-title" id="tt-title"></div>
     <div class="tooltip-grid">
       <span class="tt-label">Est. CPU</span><span class="tt-val" id="tt-cpu">—</span>
-      <span class="tt-label">Load share</span><span class="tt-val" id="tt-share">—</span>
+      <span class="tt-label">Est. RAM</span><span class="tt-val" id="tt-ram">—</span>
       <span class="tt-label">Network</span><span class="tt-val" id="tt-net">—</span>
       <span class="tt-label">Idle</span><span class="tt-val" id="tt-idle">—</span>
     </div>

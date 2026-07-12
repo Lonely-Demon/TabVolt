@@ -74,6 +74,35 @@ export function getTierColor(tier) {
   }
 }
 
+// Rough assumption: on a typical machine the browser accounts for well
+// under half of total system memory pressure (OS + other apps take the
+// rest). Named and adjustable in one place, same spirit as the 0.6
+// "browser share of system CPU" assumption in background.js.
+export const BROWSER_MEM_SHARE_ASSUMPTION = 0.4;
+
+/**
+ * Heuristic per-tab "memory weight" — NOT a measurement. Chrome Stable
+ * extensions cannot read real per-tab memory; that requires the
+ * Dev/Canary-only `chrome.processes` API (the same restriction that ruled
+ * out real per-tab CPU — see Context/Phase1_Iteration_Log.md).
+ *
+ * Deliberately uses different signals than the CPU weight so the two
+ * columns aren't just redundant copies of each other: media buffers
+ * (audible), in-flight page assets (loading, network bytes transferred),
+ * and a small bonus for the active tab (less likely to have been trimmed
+ * by Chrome's own memory management). Idle time is deliberately NOT a
+ * factor here — an idle-but-still-live tab doesn't free its memory just
+ * by sitting in the background the way it drains down its CPU/energy score.
+ */
+export function computeMemoryWeight(is_audible, is_loading, kb_per_cycle, is_active) {
+  let w = 1;
+  if (is_audible) w += 15;
+  if (is_loading) w += 10;
+  w += Math.min(kb_per_cycle / 4, 25);
+  if (is_active) w += 5;
+  return w;
+}
+
 /**
  * Estimate milliwatt-hours consumed by a tab over one poll cycle.
  * Formula: (cpu_pct/100) × tdp_watts × (elapsed_seconds/3600) × 1000

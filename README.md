@@ -9,7 +9,7 @@
 ## ✨ Features
 
 - **Per-tab energy scoring** — a normalized 0–100 Energy Score for every open tab, weighted across estimated CPU share (55%), network activity (20%), idle time (15%), and background state (10%).
-- **Task-manager UI** — a sortable, searchable live table of every tab (CPU / network / score columns), updated in place with zero flicker, with per-row actions: suspend, pause animations, protect.
+- **Task-manager UI** — a sortable, searchable live table of every tab (CPU / network / RAM columns), updated in place with zero flicker, with per-row actions: suspend, pause animations, protect. CPU and RAM are clearly marked (`~`) as relative estimates, not exact measurements — see **Accuracy** below for why. The composite energy score keeps driving Suspend Idle, the heatmap, and AI ranking behind the scenes even though it's no longer its own column.
 - **Real battery awareness** — battery level and charging state are read via an offscreen document (the Battery Status API isn't available to MV3 service workers) and drive:
   - **Adaptive polling** — 5 s when plugged in, degrading to 20 s on critical battery, so TabVolt never becomes the drain it measures.
   - **Energy Budget mode** — "keep my battery above 30% until 18:00"; TabVolt projects your drain rate and suspends the worst offenders when you're off track.
@@ -82,6 +82,31 @@ or just run `start_companion.bat`, which builds automatically if [Go](https://go
 ### Privacy
 
 All monitoring data (tab titles, URLs, per-tab metrics) stays in your browser's IndexedDB and is pruned automatically. Nothing leaves your machine unless you enable AI suggestions, in which case the titles of suspendable background tabs are sent to Groq with your own API key.
+
+## 🎯 Accuracy — why the numbers are estimates
+
+Chrome Stable-channel extensions have no API for real per-tab CPU or memory —
+that data (`chrome.processes`) is restricted to the Dev/Canary channels and
+breaks installation on Stable (this project's own [Phase 1 log](Context/Phase1_Iteration_Log.md)
+hit that wall early on). So every per-tab number in the popup is a heuristic
+split of a real system-wide total, not a process reading:
+
+- **System-wide CPU%** and **system-wide memory%** (`chrome.system.cpu` /
+  `chrome.system.memory`) are real, measured values.
+- Each tab's **share** of those totals is estimated from its activity —
+  active/audible/loading state and network bytes transferred — using two
+  *different* weighting formulas for CPU vs. RAM (`energyscore.js`), so the
+  two columns don't just move in lockstep and tell you nothing new.
+- The `~` prefix on the CPU and RAM columns is a permanent reminder of this,
+  not just a hover tooltip.
+
+This also means TabVolt's numbers won't track Task Manager's tick-by-tick —
+partly because per-tab attribution is inherently approximate, and partly
+because polling is deliberately adaptive (5–20 s depending on battery/CPU/
+charging) rather than Task Manager's ~1 s cadence, so an energy-monitoring
+tool doesn't itself become a meaningful drain. The **Net** column is the
+exception: it's real per-tab byte-counted data from `chrome.webRequest`, not
+a heuristic split, which is why it doesn't carry the `~` marker.
 
 ## 🤝 Contribution
 

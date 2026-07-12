@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 import {
     computeEnergyScore, getScoreTier, getTierColor,
     estimateMwh, estimateCO2g, formatCO2Mass,
-    getAdaptiveInterval, GRID_KG_CO2_PER_KWH, isRestrictedUrl
+    getAdaptiveInterval, GRID_KG_CO2_PER_KWH, isRestrictedUrl,
+    computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
 } from '../energyscore.js';
 
 // ---------------------------------------------------------------------------
@@ -154,4 +155,45 @@ test('internal browser and store pages are restricted', () => {
 test('no URL yet (tab still loading) counts as restricted', () => {
     assert.equal(isRestrictedUrl(''), true);
     assert.equal(isRestrictedUrl(undefined), true);
+});
+
+// ---------------------------------------------------------------------------
+// computeMemoryWeight — deliberately different signals than the CPU weight,
+// so the RAM column isn't just a rescaled copy of the CPU column.
+// ---------------------------------------------------------------------------
+
+test('a silent, idle, non-loading tab gets only the baseline memory weight', () => {
+    assert.equal(computeMemoryWeight(false, false, 0, false), 1);
+});
+
+test('idle time is not a memory-weight input (unlike the CPU weight)', () => {
+    // computeMemoryWeight has no idle_mins parameter at all — a tab that's
+    // sat idle for hours still holds its DOM/JS heap, so nothing here should
+    // decay with time the way the CPU-derived energy score does.
+    assert.equal(computeMemoryWeight.length, 4);
+});
+
+test('audible tabs get the media-buffer bonus', () => {
+    assert.equal(computeMemoryWeight(true, false, 0, false), 1 + 15);
+});
+
+test('loading tabs get the in-flight-assets bonus', () => {
+    assert.equal(computeMemoryWeight(false, true, 0, false), 1 + 10);
+});
+
+test('active tab gets a small bonus, much smaller than audible/loading', () => {
+    assert.equal(computeMemoryWeight(false, false, 0, true), 1 + 5);
+});
+
+test('network KB scales the weight up to a cap', () => {
+    assert.equal(computeMemoryWeight(false, false, 40, false), 1 + 10); // 40/4 = 10, under cap
+    assert.equal(computeMemoryWeight(false, false, 1000, false), 1 + 25); // capped at 25
+});
+
+test('all signals combine additively', () => {
+    assert.equal(computeMemoryWeight(true, true, 40, true), 1 + 15 + 10 + 10 + 5);
+});
+
+test('the assumed browser share of system memory is a fraction under one', () => {
+    assert.ok(BROWSER_MEM_SHARE_ASSUMPTION > 0 && BROWSER_MEM_SHARE_ASSUMPTION < 1);
 });

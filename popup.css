@@ -16,10 +16,26 @@
   --text-dim: #A9AFC0;
   --text-muted: #686F84;
 
-  /* Brand + semantic */
+  /* Energy identity — the bolt/logo and anything meaning "this is TabVolt"
+     or "this is about power/warning". Used sparingly and deliberately. */
   --accent: #F0742A;
   --accent-2: #FF9A4D;
   --accent-soft: rgba(240, 116, 42, 0.14);
+
+  /* Brand action — the second accent. Everything interactive/navigational
+     (primary button, focus rings, links, toggles, active states) so a
+     glance tells "click this" (blue) apart from "this is energy" (orange). */
+  --brand: #4C8EFF;
+  --brand-2: #7CB0FF;
+  --brand-soft: rgba(76, 142, 255, 0.14);
+
+  /* AI feature accent — scoped to the AI-suggestion affordance only,
+     matching the violet convention modern products use for "smart" features. */
+  --ai: #A78BFA;
+  --ai-2: #C4B5FD;
+  --ai-soft: rgba(167, 139, 250, 0.16);
+
+  /* Semantic (energy score tiers, status) */
   --ok: #3DDC84;
   --warn: #FFB020;
   --crit: #FF6E5E;
@@ -38,6 +54,12 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 32px rgba(0, 0, 0, 0.38);
   --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.5);
   --glow-accent: 0 4px 18px rgba(240, 116, 42, 0.35);
+  --glow-brand: 0 4px 18px rgba(76, 142, 255, 0.35);
+
+  /* Structural dividers — a touch stronger than --border so stacked
+     sections and list rows read clearly (the "Google" half of the brief)
+     without turning the near-black cards into a grid. */
+  --divider: rgba(255, 255, 255, 0.09);
 
   --ease: 160ms cubic-bezier(0.2, 0, 0, 1);
 }
@@ -76,21 +98,34 @@ body {
   overflow-y: auto;
 }
 
-/* Ambient glow behind the header — gives the canvas depth */
-body::before {
+/* Ambient glow behind the header — two-tone mesh (orange identity + blue
+   action) gives the canvas depth without either color dominating. */
+body::before,
+body::after {
   content: "";
   position: fixed;
-  top: -140px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 520px;
-  height: 300px;
-  background: radial-gradient(ellipse at center,
-      rgba(240, 116, 42, 0.10) 0%,
-      rgba(240, 116, 42, 0.03) 45%,
-      transparent 70%);
+  width: 420px;
+  height: 260px;
   pointer-events: none;
   z-index: 0;
+}
+
+body::before {
+  top: -130px;
+  left: 20%;
+  background: radial-gradient(ellipse at center,
+      rgba(240, 116, 42, 0.11) 0%,
+      rgba(240, 116, 42, 0.03) 45%,
+      transparent 70%);
+}
+
+body::after {
+  top: -100px;
+  right: -60px;
+  background: radial-gradient(ellipse at center,
+      rgba(76, 142, 255, 0.09) 0%,
+      rgba(76, 142, 255, 0.02) 45%,
+      transparent 70%);
 }
 
 body>* {
@@ -99,7 +134,7 @@ body>* {
 }
 
 a {
-  color: var(--accent);
+  color: var(--brand);
   text-decoration: none;
 }
 
@@ -113,13 +148,13 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--brand-soft);
 }
 
 /* Scrollbars */
@@ -293,16 +328,16 @@ button {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent-2) 0%, var(--accent) 60%, #E05E0F 100%);
+  background: linear-gradient(135deg, var(--brand-2) 0%, var(--brand) 60%, #2E6FE0 100%);
   border-color: transparent;
   color: #fff;
-  box-shadow: var(--glow-accent), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: var(--glow-brand), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, #FFA85F 0%, #F97F35 60%, #E8660F 100%);
+  background: linear-gradient(135deg, #9AC4FF 0%, #5F9BFF 60%, #2E6FE0 100%);
   border-color: transparent;
-  box-shadow: 0 6px 22px rgba(240, 116, 42, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: 0 6px 22px rgba(76, 142, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-small {
@@ -331,15 +366,17 @@ button {
   transform: translateY(-1px);
 }
 
-.icon-btn-accent {
-  color: var(--accent);
-  border-color: rgba(240, 116, 42, 0.35);
-  background: var(--accent-soft);
+/* Scoped to the AI-suggestion button — violet reads as "smart feature"
+   and visually separates it from the brand-blue primary action. */
+.icon-btn-ai {
+  color: var(--ai);
+  border-color: rgba(167, 139, 250, 0.35);
+  background: var(--ai-soft);
 }
 
-.icon-btn-accent:hover {
-  background: rgba(240, 116, 42, 0.22);
-  color: var(--accent-2);
+.icon-btn-ai:hover {
+  background: rgba(167, 139, 250, 0.24);
+  color: var(--ai-2);
 }
 
 /* ======================= BUDGET STRIP ======================= */
@@ -381,7 +418,7 @@ button {
 }
 
 .drawer-section+.drawer-section {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--divider);
 }
 
 .drawer-section-title {
@@ -438,8 +475,8 @@ button {
 
 .input:focus,
 .select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(240, 116, 42, 0.15);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(76, 142, 255, 0.15);
 }
 
 .input-num {
@@ -552,7 +589,7 @@ button {
 }
 
 .toggle-switch input:checked+.slider {
-  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  background: linear-gradient(135deg, var(--brand-2), var(--brand));
   border-color: transparent;
 }
 
@@ -562,7 +599,7 @@ button {
 }
 
 .toggle-switch input:focus-visible+.slider {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -591,8 +628,8 @@ button {
 }
 
 #search-wrap:focus-within {
-  border-color: rgba(240, 116, 42, 0.5);
-  box-shadow: 0 0 0 3px rgba(240, 116, 42, 0.15), var(--shadow-card);
+  border-color: rgba(76, 142, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(76, 142, 255, 0.15), var(--shadow-card);
 }
 
 #search-input {
@@ -618,8 +655,8 @@ button {
 
 #ai-panel {
   padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(240, 116, 42, 0.10) 0%, rgba(240, 116, 42, 0.02) 65%), var(--surface);
-  border-color: rgba(240, 116, 42, 0.28);
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.10) 0%, rgba(167, 139, 250, 0.02) 65%), var(--surface);
+  border-color: rgba(167, 139, 250, 0.28);
   flex-shrink: 0;
 }
 
@@ -673,9 +710,14 @@ button {
   grid-template-columns: minmax(0, 1fr) 44px 54px 48px 76px;
   align-items: center;
   padding: 0 8px;
-  margin: 0 8px;
+  margin: 0 8px 2px;
   height: 26px;
-  border-bottom: 1px solid var(--border);
+  /* A faint tinted bar (Sheets/Gmail-style list toolbar) instead of a bare
+     bottom rule — reads as "structure" without adding a hard line inside
+     an otherwise borderless card. */
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--divider);
   flex-shrink: 0;
 }
 
@@ -709,7 +751,7 @@ button {
 }
 
 .col.sort-active {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .sort-arrow {
@@ -741,6 +783,12 @@ button {
 
 .tab-row:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+/* Hairline dividers between rows — the "Google" structural half of the
+   brief, kept faint enough not to fight the Spotify-style borderless cards. */
+.tab-row:not(:last-child) {
+  border-bottom: 1px solid var(--divider);
 }
 
 .cell-name {
@@ -800,8 +848,8 @@ button {
 }
 
 .state-protected {
-  background: var(--accent-soft);
-  color: var(--accent-2);
+  background: var(--brand-soft);
+  color: var(--brand-2);
 }
 
 .preemptive-icon {
@@ -870,7 +918,7 @@ button {
 }
 
 .tab-btn.shield-on {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 /* Row states */
@@ -883,7 +931,7 @@ button {
 }
 
 .tab-row.protected {
-  box-shadow: inset 2.5px 0 0 var(--accent);
+  box-shadow: inset 2.5px 0 0 var(--brand);
 }
 
 .empty-state {

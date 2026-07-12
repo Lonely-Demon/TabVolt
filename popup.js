@@ -142,10 +142,17 @@ function rebuildBadgesAndActions(row, t) {
     if (t.preemptive_flag && !t.is_protected) {
         badgeHtml += `<span class="preemptive-icon" title="Rarely revisited — likely safe to suspend">${ICON_WARN}</span>`;
     }
-    if (t.state === 'suspended') badgeHtml += '<span class="tab-state-badge state-suspended">Zz</span>';
-    else if (t.state === 'sleeping') badgeHtml += '<span class="tab-state-badge state-sleeping">Sleep</span>';
-    else if (t.audible) badgeHtml += `<span class="tab-state-badge state-audible" title="Playing audio">${ICON_AUDIO}</span>`;
-    if (t.is_protected) badgeHtml += '<span class="tab-state-badge state-protected" title="Protected from suspension">Safe</span>';
+    let hasStateBadge = false;
+    if (t.state === 'suspended') { badgeHtml += '<span class="tab-state-badge state-suspended">Zz</span>'; hasStateBadge = true; }
+    else if (t.state === 'sleeping') { badgeHtml += '<span class="tab-state-badge state-sleeping">Sleep</span>'; hasStateBadge = true; }
+    else if (t.audible) { badgeHtml += `<span class="tab-state-badge state-audible" title="Playing audio">${ICON_AUDIO}</span>`; hasStateBadge = true; }
+    // The protected row already gets a persistent left rail (see .tab-row.protected
+    // below) — only spend title-row space on the "Safe" text badge when there's no
+    // competing state badge, so a protected+sleeping tab doesn't lose its title to
+    // two stacked pills.
+    if (t.is_protected && !hasStateBadge) {
+        badgeHtml += '<span class="tab-state-badge state-protected" title="Protected from suspension">Safe</span>';
+    }
     badges.innerHTML = badgeHtml;
 
     let actionsHtml = '';
@@ -507,11 +514,25 @@ function scoreToColor(score) {
     return `rgb(${Math.round(39 + (243 - 39) * t)},${Math.round(174 + (156 - 174) * t)},${Math.round(96 + (18 - 96) * t)})`;
 }
 
+/**
+ * Width the heatmap canvas may actually draw into — the content box of its
+ * parent card, minus that card's own horizontal padding. Computed live
+ * (not a hardcoded px constant) so the canvas always fits the popup's
+ * current width instead of clipping or leaving dead space.
+ */
+function heatmapAvailableWidth(canvas) {
+    const section = canvas.parentElement;
+    const cs = getComputedStyle(section);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    return Math.max(160, section.clientWidth - padX);
+}
+
 function renderHeatmap(buffer) {
     if (!heatmapCtx || !buffer) return;
     const canvas = heatmapCanvas;
     const ctx = heatmapCtx;
     const dpr = window.devicePixelRatio || 1;
+    const availableW = heatmapAvailableWidth(canvas);
 
     const entries = Object.entries(buffer)
         .map(([id, data]) => ({ id, title: data.title, favicon: data.favicon, url: data.url, order: data.order ?? 999, scores: data.scores }))
@@ -520,18 +541,21 @@ function renderHeatmap(buffer) {
         .slice(0, 10);
 
     if (entries.length === 0) {
-        canvas.width = 380 * dpr; canvas.height = 30 * dpr;
-        canvas.style.width = '380px'; canvas.style.height = '30px';
+        canvas.width = availableW * dpr; canvas.height = 30 * dpr;
+        canvas.style.width = availableW + 'px'; canvas.style.height = '30px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = '#6E7487';
         ctx.font = '11px -apple-system, sans-serif';
-        ctx.fillText('Waiting for data…', 140, 18);
+        ctx.fillText('Waiting for data…', availableW / 2 - 50, 18);
         return;
     }
 
-    const cellW = 11, cellH = 14, gapX = 1, gapY = 3;
+    const cellH = 14, gapX = 1, gapY = 3;
     const cols = 30;
     const labelW = 24;
+    // Cell width fills whatever room the popup currently has — 30 cycles
+    // always fit, they just render narrower on a slimmer popup.
+    const cellW = Math.max(4, (availableW - labelW - cols * gapX) / cols);
     const totalH = entries.length * (cellH + gapY) - gapY;
     const cssW = labelW + cols * (cellW + gapX);
     const cssH = Math.max(totalH + 4, 30);

@@ -76,7 +76,7 @@
 
 html,
 body {
-  width: 480px;
+  width: 400px;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
@@ -436,6 +436,7 @@ button {
 .drawer-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -707,10 +708,10 @@ button {
 
 #list-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 54px 48px 76px;
+  grid-template-columns: minmax(0, 1fr) 40px 48px 42px 70px;
   align-items: center;
-  padding: 0 8px;
-  margin: 0 8px 2px;
+  padding: 0 6px;
+  margin: 0 6px 2px;
   height: 26px;
   /* A faint tinted bar (Sheets/Gmail-style list toolbar) instead of a bare
      bottom rule — reads as "structure" without adding a hard line inside
@@ -770,11 +771,11 @@ button {
 
 .tab-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 54px 48px 76px;
+  grid-template-columns: minmax(0, 1fr) 40px 48px 42px 70px;
   align-items: center;
   height: var(--row-h);
-  margin: 0 8px;
-  padding: 0 8px;
+  margin: 0 6px;
+  padding: 0 6px;
   border-radius: 10px;
   transition: background var(--ease);
   content-visibility: auto;
@@ -903,8 +904,8 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   background: transparent;
   border: none;
   border-radius: 50%;
@@ -947,8 +948,8 @@ button {
   align-items: center;
   gap: 8px;
   height: var(--row-h);
-  margin: 0 8px;
-  padding: 0 8px;
+  margin: 0 6px;
+  padding: 0 6px;
 }
 
 .sk {

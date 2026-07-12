@@ -1,482 +1,497 @@
 // popup.js — ES Module UI
+//
+// Rendering strategy: rows are keyed by tabId and updated in place — text
+// nodes only change when their value changes, and rows are only re-ordered
+// when the sort outcome actually differs. No innerHTML wipes on the hot
+// path, so hover states, focus, and scroll position survive every refresh.
+
+import { getScoreTier, getTierColor } from './energyscore.js';
 
 // ============================================================================
-// HELPERS
+// CONSTANTS + HELPERS
 // ============================================================================
 
-function getScoreTier(score) {
-    if (score > 70) return 'high';
-    if (score >= 30) return 'mid';
-    return 'low';
-}
-function getTierColor(tier) {
-    return tier === 'high' ? '#C0392B' : tier === 'mid' ? '#F39C12' : '#27AE60';
-}
+const REFRESH_MS = 2000;
+const COMPANION_URL = 'http://127.0.0.1:9001/metrics';
 
 const DEFAULT_FAVICON = 'data:image/svg+xml,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>'
 );
 
-const ICON_SLEEP = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`;
-const ICON_SUSPEND = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
-const ICON_WAKE = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
-const ICON_AUDIO = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>`;
-
-// ============================================================================
-// DOM REFS
-// ============================================================================
-
-const metricCpu = document.getElementById('metric-cpu');
-const metricRam = document.getElementById('metric-ram');
-const metricBattery = document.getElementById('metric-battery');
-const tabListEl = document.getElementById('tab-list');
-const companionBadge = document.getElementById('companion-badge');
-const enhancedToggle = document.getElementById('enhanced-toggle');
-const btnSuspendTop = document.getElementById('btn-suspend-top');
-const btnAiSuggest = document.getElementById('btn-ai-suggest');
-const aiPanel = document.getElementById('ai-panel');
-const aiText = document.getElementById('ai-text');
-const btnActNow = document.getElementById('btn-act-now');
-const footerMwh = document.getElementById('footer-mwh');
-const footerCo2 = document.getElementById('footer-co2');
-const footerRam = document.getElementById('footer-ram');
-
-// Portal tooltip — single element, lives OUTSIDE all tab rows
-const tooltipPanel = document.getElementById('tab-tooltip-panel');
-const ttTitle = document.getElementById('tt-title');
-const ttCpu = document.getElementById('tt-cpu');
-const ttRam = document.getElementById('tt-ram');
-const ttNet = document.getElementById('tt-net');
-const ttIdle = document.getElementById('tt-idle');
-
-let lastAiTargetTabId = null;
-
-// PHASE 2 — DOM refs
-const heatmapCanvas = document.getElementById('heatmap-canvas');
-const heatmapCtx = heatmapCanvas ? heatmapCanvas.getContext('2d') : null;
-const heatmapTabCount = document.getElementById('heatmap-tab-count');
-const companionPanel = document.getElementById('companion-panel');
-const compTemp = document.getElementById('comp-temp');
-const compIgpu = document.getElementById('comp-igpu');
-const compSource = document.getElementById('comp-source');
-const btnHistory = document.getElementById('btn-history');
-
-// ============================================================================
-// PORTAL TOOLTIP — 600ms delay, single shared element, never clips
-// ============================================================================
-
-let hoverTimer = null;
-let activeRow = null;
-
-// Tab data map for tooltip population (tabId → tab payload)
-const tabDataMap = new Map();
-
-function showTooltip(tabId) {
-    const t = tabDataMap.get(tabId);
-    if (!t || t.state === 'suspended') return;
-    ttTitle.textContent = t.title;
-    ttCpu.textContent = `${t.cpu_pct}%`;
-    ttRam.textContent = `~${t.memory_mb || 0} MB`;
-    ttNet.textContent = formatKB(t.kb_transferred);
-    ttIdle.textContent = formatIdle(t.idle_mins);
-    tooltipPanel.style.display = 'block';
-}
-
-function hideTooltip() {
-    clearTimeout(hoverTimer);
-    hoverTimer = null;
-    tooltipPanel.style.display = 'none';
-    activeRow = null;
-}
-
-function attachHover(rowEl, tabId) {
-    rowEl.addEventListener('mouseenter', () => {
-        // Cancel any pending hide from a previous row
-        clearTimeout(hoverTimer);
-        activeRow = rowEl;
-        hoverTimer = setTimeout(() => showTooltip(tabId), 600);
-    });
-    rowEl.addEventListener('mouseleave', () => {
-        clearTimeout(hoverTimer);
-        hoverTimer = null;
-        // Small grace period — if user enters another row, that row's mouseenter takes over
-        // If they leave entirely (mouseout to body), hide after brief pause
-        hoverTimer = setTimeout(hideTooltip, 80);
-    });
-}
-
-// ============================================================================
-// RENDER
-// ============================================================================
-
-function renderSystemMetrics(system) {
-    if (!system) return;
-
-    const iconCpu = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>`;
-    const iconRam = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><line x1="6" y1="6" x2="6" y2="18"/><line x1="10" y1="6" x2="10" y2="18"/><line x1="14" y1="6" x2="14" y2="18"/><line x1="18" y1="6" x2="18" y2="18"/></svg>`;
-    const iconBattery = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-ok)"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="11"/></svg>`;
-    const iconCharge = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-warn)"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
-
-    metricCpu.innerHTML = `${iconCpu} CPU ${system.cpu_pct}%`;
-    metricRam.innerHTML = `${iconRam} RAM ${system.memory_pct}%`;
-    metricBattery.innerHTML = `${system.is_charging ? iconCharge : iconBattery} ${system.battery_pct}%`;
-}
-
-function renderTabList(tabs) {
-    tabDataMap.clear();
-
-    if (!tabs || tabs.length === 0) {
-        tabListEl.innerHTML = '<p class="empty-state">Waiting for data…</p>';
-        return;
-    }
-
-    // Tabs stay in browser order — no sort
-    const html = tabs.map(t => {
-        tabDataMap.set(t.tabId, t);
-
-        const tier = getScoreTier(t.energyscore);
-        const color = getTierColor(tier);
-        const title = t.title.length > 28 ? t.title.slice(0, 28) + '…' : t.title;
-        const favicon = t.favicon || DEFAULT_FAVICON;
-        const state = t.state || 'normal';
-
-        // PHASE 3 — protected styling
-        const isProtected = t.is_protected || false;
-        const rowClass = isProtected ? (state === 'suspended' ? 'tab-row suspended protected' : 'tab-row protected')
-            : state === 'suspended' ? 'tab-row suspended'
-                : state === 'sleeping' ? 'tab-row sleeping' : 'tab-row';
-
-        let stateBadge = '';
-        if (state === 'suspended') stateBadge = '<span class="tab-state-badge state-suspended">Suspended</span>';
-        else if (state === 'sleeping') stateBadge = '<span class="tab-state-badge state-sleeping">Sleeping</span>';
-        else if (t.audible) stateBadge = `<span class="tab-state-badge state-audible">${ICON_AUDIO}</span>`;
-        else if (isProtected) stateBadge = '<span class="tab-state-badge" style="color:var(--color-accent,#E86A1A);font-size:9px;">Protected</span>';
-
-        // PHASE 3 — preemptive flag badge
-        const preemptiveBadge = (t.preemptive_flag && !isProtected)
-            ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-warn,#F39C12)" stroke-width="2" style="margin-right:2px;flex-shrink:0;" title="Historically ignored — likely safe to suspend"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
-            : '';
-
-        // PHASE 3 — score badge dashed border for preemptive
-        const scoreBorderStyle = (t.preemptive_flag && !isProtected)
-            ? `background:${color};border:1px dashed var(--color-warn,#F39C12)`
-            : `background:${color}`;
-
-        // PHASE 3 — shield button + actions
-        const shieldIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4z"/></svg>`;
-        const shieldBtn = (!t.audible && state !== 'suspended')
-            ? `<button class="tab-btn btn-shield" data-tab-id="${t.tabId}" data-domain="${escapeAttr(t.domain || '')}" data-title="${escapeAttr(t.title)}" title="${isProtected ? 'Remove protection' : 'Protect this tab'}" style="color:${isProtected ? 'var(--color-accent,#E86A1A)' : 'var(--text-muted,#999)'}">${shieldIcon}</button>`
-            : '';
-
-        let actions = '';
-        if (isProtected) {
-            actions = `<div class="tab-actions">${shieldBtn}</div>`;
-        } else if (state === 'normal') {
-            actions = `<div class="tab-actions">
-        ${shieldBtn}
-        <button class="tab-btn btn-sleep" data-tab-id="${t.tabId}">${ICON_SLEEP}</button>
-        ${t.is_background ? `<button class="tab-btn btn-suspend" data-tab-id="${t.tabId}">${ICON_SUSPEND}</button>` : ''}
-      </div>`;
-        } else if (state === 'sleeping') {
-            actions = `<div class="tab-actions">
-        ${shieldBtn}
-        <button class="tab-btn btn-wake" data-tab-id="${t.tabId}">${ICON_WAKE}</button>
-      </div>`;
-        }
-
-        return `<div class="${rowClass}" data-tab-id="${t.tabId}" ${isProtected ? 'style="border-left:2px solid var(--color-accent,#E86A1A)"' : ''}>
-      <img class="tab-favicon" src="${escapeAttr(favicon)}" width="16" height="16" onerror="this.src='${DEFAULT_FAVICON}'">
-      ${preemptiveBadge}
-      <span class="tab-title" title="${escapeAttr(t.title)}">${escapeHtml(title)}</span>
-      ${stateBadge}
-      <span class="score-badge" style="${scoreBorderStyle}">${Math.round(t.energyscore)}</span>
-      ${actions}
-    </div>`;
-    }).join('');
-
-    tabListEl.innerHTML = html;
-    attachTabActions();
-
-    // Attach portal tooltip hover to every row
-    tabListEl.querySelectorAll('.tab-row').forEach(row => {
-        const tabId = parseInt(row.dataset.tabId);
-        attachHover(row, tabId);
-    });
-}
-
-function attachTabActions() {
-    tabListEl.querySelectorAll('.btn-suspend').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const tabId = parseInt(e.currentTarget.dataset.tabId);
-            chrome.runtime.sendMessage({ type: 'SUSPEND_TAB', tabId });
-            const row = e.currentTarget.closest('.tab-row');
-            row.classList.remove('sleeping'); row.classList.add('suspended');
-            row.querySelector('.tab-actions')?.remove();
-            hideTooltip();
-        });
-    });
-    tabListEl.querySelectorAll('.btn-sleep').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const tabId = parseInt(e.currentTarget.dataset.tabId);
-            chrome.runtime.sendMessage({ type: 'SLEEP_TAB', tabId });
-            e.currentTarget.closest('.tab-row').classList.add('sleeping');
-        });
-    });
-    tabListEl.querySelectorAll('.btn-wake').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const tabId = parseInt(e.currentTarget.dataset.tabId);
-            chrome.runtime.sendMessage({ type: 'WAKE_TAB', tabId });
-            e.currentTarget.closest('.tab-row').classList.remove('sleeping');
-        });
-    });
-    // PHASE 3 — Shield button click handler
-    tabListEl.querySelectorAll('.btn-shield').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const tabId = parseInt(e.currentTarget.dataset.tabId);
-            const domain = e.currentTarget.dataset.domain || '';
-            const title = e.currentTarget.dataset.title || '';
-            const t = tabDataMap.get(tabId);
-            const isProtected = t?.is_protected || false;
-            const msgType = isProtected ? 'CLEAR_PROTECTED' : 'SET_PROTECTED';
-            chrome.runtime.sendMessage({ type: msgType, tabId, domain, title }, () => {
-                loadAndRender(); // refresh to reflect new state
-            });
-        });
-    });
-}
-
-function renderFooter(session, poll) {
-    if (session) {
-        footerMwh.textContent = `Session: ${(session.total_mwh || 0).toFixed(1)} mWh`;
-        // PHASE 3 — contextual CO₂ display
-        footerCo2.textContent = formatCO2(session.total_co2_grams || 0);
-    }
-    if (poll?.last_updated) {
-        const ago = Math.round((Date.now() - poll.last_updated) / 1000);
-        footerRam.textContent = `Updated: ${ago}s ago`;
-    }
-}
-
-// PHASE 3 — Contextual CO₂ formatting
-function formatCO2(grams) {
-    if (grams < 1) return `${grams.toFixed(2)}g CO₂`;
-    const km = (grams / 1000 / 0.13);
-    if (km < 0.01) return `${grams.toFixed(1)}g CO₂`;
-    return `${grams.toFixed(1)}g CO₂ · ${km.toFixed(3)}km 🚗`;
-}
-
-// ============================================================================
-// FORMATTING
-// ============================================================================
+const ICON_SLEEP = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`;
+const ICON_SUSPEND = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+const ICON_WAKE = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+const ICON_AUDIO = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>`;
+const ICON_SHIELD = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4z"/></svg>`;
+const ICON_WARN = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+const ICON_BATTERY = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="1" y="6" width="18" height="12" rx="2"/><line x1="22" y1="10" x2="22" y2="14"/></svg>`;
+const ICON_CHARGE = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
 
 function formatKB(kb) {
     if (!kb) return '0 KB';
     return kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
 }
+
 function formatIdle(mins) {
-    if (!mins) return '<1m';
+    if (!mins || mins < 1) return '<1m';
     if (mins >= 60) return Math.floor(mins / 60) + 'h ' + Math.round(mins % 60) + 'm';
-    if (mins >= 1) return Math.round(mins) + 'm';
-    return '<1m';
+    return Math.round(mins) + 'm';
 }
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function escapeAttr(s) {
-    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function formatCO2(grams) {
+    if (grams < 1) return `${grams.toFixed(2)} g CO₂`;
+    const km = grams / 130; // ~130 g CO₂ per km of driving
+    if (km < 0.01) return `${grams.toFixed(1)} g CO₂`;
+    return `${grams.toFixed(1)} g CO₂ · ${km.toFixed(2)} km 🚗`;
+}
+
+const $ = (id) => document.getElementById(id);
+
+// ============================================================================
+// STATE
+// ============================================================================
+
+const rowMap = new Map();       // tabId -> { el, cells, prev }
+let currentTabs = [];           // last payload array (browser order)
+let sort = { key: null, dir: 1, clicks: 0 };  // key null = browser order
+let searchQuery = '';
+let lastPollStamp = 0;          // dedupes renders across refresh ticks
+let lastPollTime = 0;           // for the "updated Xs ago" ticker
+let aiTarget = null;            // { tabId, title } from the last AI response
+let toastTimer = null;
+
+// ============================================================================
+// SYSTEM CHIPS
+// ============================================================================
+
+function renderSystemChips(system) {
+    if (!system) return;
+    setText('chip-cpu-val', `${system.cpu_pct ?? '—'}%`);
+    setText('chip-ram-val', `${system.memory_pct ?? '—'}%`);
+
+    const battIcon = $('chip-batt-icon');
+    const battVal = $('chip-batt-val');
+    if (system.battery_pct === null || system.battery_pct === undefined) {
+        battIcon.innerHTML = ICON_BATTERY;
+        battVal.textContent = '—';
+        $('chip-batt').title = 'Battery status unavailable';
+    } else {
+        battIcon.innerHTML = system.is_charging ? ICON_CHARGE : ICON_BATTERY;
+        battIcon.style.color = system.is_charging ? 'var(--warn)'
+            : system.battery_pct < 15 ? 'var(--crit)'
+                : system.battery_pct < 30 ? 'var(--warn)' : 'var(--ok)';
+        battVal.textContent = `${system.battery_pct}%`;
+        $('chip-batt').title = system.is_charging ? 'Battery (charging)' : 'Battery';
+    }
 }
 
 // ============================================================================
-// DATA REFRESH
+// TAB TABLE — differential renderer
 // ============================================================================
 
-async function loadAndRender() {
-    const data = await chrome.storage.session.get(null);
-    if (!data?.tabs) {
-        tabListEl.innerHTML = '<p class="empty-state">Waiting for data…</p>';
-        hideTooltip();
+function stateSig(t) {
+    return `${t.state}|${t.is_protected}|${t.audible}|${t.preemptive_flag}|${t.is_background}`;
+}
+
+function createRow(t) {
+    const el = document.createElement('div');
+    el.dataset.tabId = t.tabId;
+
+    const name = document.createElement('div');
+    name.className = 'cell-name';
+    const favicon = document.createElement('img');
+    favicon.className = 'tab-favicon';
+    favicon.width = 14; favicon.height = 14; favicon.alt = '';
+    favicon.addEventListener('error', () => {
+        if (favicon.src !== DEFAULT_FAVICON) favicon.src = DEFAULT_FAVICON;
+    });
+    const title = document.createElement('span');
+    title.className = 'tab-title';
+    const badges = document.createElement('span');
+    badges.className = 'tab-badges';
+    name.append(favicon, title, badges);
+
+    const cpu = document.createElement('span');
+    cpu.className = 'cell-num';
+    const net = document.createElement('span');
+    net.className = 'cell-num';
+
+    const scoreWrap = document.createElement('span');
+    scoreWrap.className = 'cell-score';
+    const score = document.createElement('span');
+    score.className = 'score-badge';
+    scoreWrap.appendChild(score);
+
+    const actions = document.createElement('span');
+    actions.className = 'cell-actions';
+
+    el.append(name, cpu, net, scoreWrap, actions);
+
+    const row = { el, cells: { favicon, title, badges, cpu, net, score, actions }, prev: {} };
+    rowMap.set(t.tabId, row);
+    return row;
+}
+
+function rebuildBadgesAndActions(row, t) {
+    const { badges, actions } = row.cells;
+
+    let badgeHtml = '';
+    if (t.preemptive_flag && !t.is_protected) {
+        badgeHtml += `<span class="preemptive-icon" title="Rarely revisited — likely safe to suspend">${ICON_WARN}</span>`;
+    }
+    if (t.state === 'suspended') badgeHtml += '<span class="tab-state-badge state-suspended">Zz</span>';
+    else if (t.state === 'sleeping') badgeHtml += '<span class="tab-state-badge state-sleeping">Sleep</span>';
+    else if (t.audible) badgeHtml += `<span class="tab-state-badge state-audible" title="Playing audio">${ICON_AUDIO}</span>`;
+    if (t.is_protected) badgeHtml += '<span class="tab-state-badge state-protected" title="Protected from suspension">Safe</span>';
+    badges.innerHTML = badgeHtml;
+
+    let actionsHtml = '';
+    const shieldBtn = `<button class="tab-btn ${t.is_protected ? 'shield-on' : ''}" data-act="shield"
+        title="${t.is_protected ? 'Remove protection' : 'Protect this tab'}"
+        aria-label="${t.is_protected ? 'Remove protection' : 'Protect this tab'}">${ICON_SHIELD}</button>`;
+
+    if (t.state === 'suspended') {
+        actionsHtml = '';
+    } else if (t.is_protected) {
+        actionsHtml = shieldBtn;
+    } else if (t.state === 'sleeping') {
+        actionsHtml = shieldBtn +
+            `<button class="tab-btn" data-act="wake" title="Wake tab" aria-label="Wake tab">${ICON_WAKE}</button>`;
+    } else {
+        actionsHtml = shieldBtn +
+            `<button class="tab-btn" data-act="sleep" title="Pause animations" aria-label="Pause animations">${ICON_SLEEP}</button>` +
+            (t.is_background
+                ? `<button class="tab-btn" data-act="suspend" title="Suspend tab" aria-label="Suspend tab">${ICON_SUSPEND}</button>`
+                : '');
+    }
+    actions.innerHTML = actionsHtml;
+
+    el_setRowClass(row.el, t);
+}
+
+function el_setRowClass(el, t) {
+    let cls = 'tab-row';
+    if (t.state === 'suspended') cls += ' suspended';
+    else if (t.state === 'sleeping') cls += ' sleeping';
+    if (t.is_protected) cls += ' protected';
+    el.className = cls;
+}
+
+function updateRow(row, t) {
+    const { cells, prev } = row;
+
+    if (prev.title !== t.title) {
+        cells.title.textContent = t.title;
+        cells.title.title = t.title;
+        prev.title = t.title;
+    }
+    const fav = t.favicon || DEFAULT_FAVICON;
+    if (prev.favicon !== fav) {
+        cells.favicon.src = fav;
+        prev.favicon = fav;
+    }
+
+    const suspended = t.state === 'suspended';
+    const cpuText = suspended ? '—' : `${(t.cpu_pct ?? 0).toFixed(1)}%`;
+    if (prev.cpuText !== cpuText) { cells.cpu.textContent = cpuText; prev.cpuText = cpuText; }
+
+    const netText = suspended ? '—' : formatKB(t.kb_transferred);
+    if (prev.netText !== netText) { cells.net.textContent = netText; prev.netText = netText; }
+
+    const scoreText = String(Math.round(t.energyscore));
+    if (prev.scoreText !== scoreText) { cells.score.textContent = scoreText; prev.scoreText = scoreText; }
+    const color = getTierColor(getScoreTier(t.energyscore));
+    if (prev.scoreColor !== color) { cells.score.style.background = color; prev.scoreColor = color; }
+    const pre = t.preemptive_flag && !t.is_protected;
+    if (prev.scorePre !== pre) { cells.score.classList.toggle('preemptive', pre); prev.scorePre = pre; }
+
+    const sig = stateSig(t);
+    if (prev.sig !== sig) {
+        rebuildBadgesAndActions(row, t);
+        prev.sig = sig;
+    }
+}
+
+function sortedFiltered(tabs) {
+    let list = tabs.map((t, i) => ({ t, i }));
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        list = list.filter(({ t }) =>
+            (t.title || '').toLowerCase().includes(q) || (t.domain || '').toLowerCase().includes(q));
+    }
+    if (sort.key) {
+        const k = sort.key, d = sort.dir;
+        list.sort((a, b) => {
+            const va = a.t[k], vb = b.t[k];
+            if (typeof va === 'string') return d * va.localeCompare(vb);
+            return d * ((va || 0) - (vb || 0));
+        });
+    } else {
+        list.sort((a, b) => a.i - b.i);
+    }
+    return list.map(({ t }) => t);
+}
+
+function renderTabList(tabs) {
+    currentTabs = tabs || [];
+    const listEl = $('tab-list');
+    const emptyEl = $('list-empty');
+
+    // Clear skeletons on first real data.
+    listEl.querySelectorAll('.skeleton-row').forEach(n => n.remove());
+
+    const visible = sortedFiltered(currentTabs);
+
+    // Remove rows for closed tabs.
+    const liveIds = new Set(currentTabs.map(t => t.tabId));
+    for (const [tabId, row] of rowMap) {
+        if (!liveIds.has(tabId)) {
+            row.el.remove();
+            rowMap.delete(tabId);
+        }
+    }
+
+    // Update / create rows.
+    const visibleIds = new Set();
+    for (const t of visible) {
+        visibleIds.add(t.tabId);
+        let row = rowMap.get(t.tabId);
+        if (!row) row = createRow(t);
+        row.el.hidden = false;
+        updateRow(row, t);
+    }
+    // Hide rows filtered out by search (keep them warm).
+    for (const [tabId, row] of rowMap) {
+        if (!visibleIds.has(tabId)) row.el.hidden = true;
+    }
+
+    // Re-append only if the visible order actually changed.
+    const desired = visible.map(t => rowMap.get(t.tabId).el);
+    const current = [...listEl.children].filter(el => !el.hidden);
+    const orderChanged = desired.length !== current.length ||
+        desired.some((el, i) => el !== current[i]);
+    if (orderChanged) {
+        const frag = document.createDocumentFragment();
+        for (const t of visible) frag.appendChild(rowMap.get(t.tabId).el);
+        for (const [tabId, row] of rowMap) {
+            if (!visibleIds.has(tabId)) frag.appendChild(row.el);
+        }
+        listEl.appendChild(frag);
+    }
+
+    // Empty states.
+    if (currentTabs.length === 0) {
+        emptyEl.textContent = 'Waiting for first sample…';
+        emptyEl.hidden = false;
+    } else if (visible.length === 0) {
+        emptyEl.textContent = `No tabs match “${searchQuery}”`;
+        emptyEl.hidden = false;
+    } else {
+        emptyEl.hidden = true;
+    }
+}
+
+// ---- Row action delegation (one listener for every button) ----
+
+$('tab-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    e.stopPropagation();
+    const rowEl = btn.closest('.tab-row');
+    const tabId = parseInt(rowEl.dataset.tabId, 10);
+    const t = currentTabs.find(x => x.tabId === tabId);
+    if (!t) return;
+
+    switch (btn.dataset.act) {
+        case 'suspend':
+            chrome.runtime.sendMessage({ type: 'SUSPEND_TAB', tabId }, (res) => {
+                if (res?.success) showToast(`Suspended “${truncate(t.title, 32)}”`);
+                else showToast(res?.error || 'Could not suspend tab');
+                refresh(true);
+            });
+            break;
+        case 'sleep':
+            chrome.runtime.sendMessage({ type: 'SLEEP_TAB', tabId }, (res) => {
+                if (!res?.success) showToast(res?.error || 'Could not pause tab');
+                refresh(true);
+            });
+            break;
+        case 'wake':
+            chrome.runtime.sendMessage({ type: 'WAKE_TAB', tabId }, () => refresh(true));
+            break;
+        case 'shield': {
+            const msgType = t.is_protected ? 'CLEAR_PROTECTED' : 'SET_PROTECTED';
+            chrome.runtime.sendMessage(
+                { type: msgType, tabId, domain: t.domain || '', title: t.title },
+                () => {
+                    showToast(t.is_protected ? 'Protection removed' : `Protected “${truncate(t.title, 32)}”`);
+                    refresh(true);
+                }
+            );
+            break;
+        }
+    }
+    hideTooltip();
+});
+
+// ---- Sorting ----
+
+document.querySelectorAll('#list-header .sortable').forEach(col => {
+    col.addEventListener('click', () => {
+        const key = col.dataset.sort;
+        if (sort.key !== key) {
+            sort = { key, dir: key === 'title' ? 1 : -1, clicks: 1 };
+        } else if (sort.clicks === 1) {
+            sort.dir *= -1;
+            sort.clicks = 2;
+        } else {
+            sort = { key: null, dir: 1, clicks: 0 }; // third click: browser order
+        }
+        updateSortIndicators();
+        renderTabList(currentTabs);
+    });
+});
+
+function updateSortIndicators() {
+    document.querySelectorAll('#list-header .sortable').forEach(col => {
+        const active = sort.key === col.dataset.sort;
+        col.classList.toggle('sort-active', active);
+        col.querySelector('.sort-arrow').textContent = active ? (sort.dir === 1 ? '▲' : '▼') : '';
+    });
+}
+
+// ---- Search ----
+
+$('search-input').addEventListener('input', (e) => {
+    searchQuery = e.target.value.trim();
+    renderTabList(currentTabs);
+});
+
+// ============================================================================
+// TOOLTIP — single portal element, positioned next to the hovered row
+// ============================================================================
+
+const tooltipPanel = $('tab-tooltip-panel');
+let hoverTimer = null;
+let hoverTabId = null;
+
+$('tab-list-container').addEventListener('mouseover', (e) => {
+    const rowEl = e.target.closest('.tab-row');
+    if (!rowEl) return;
+    const tabId = parseInt(rowEl.dataset.tabId, 10);
+    if (tabId === hoverTabId) return;
+    hoverTabId = tabId;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => showTooltip(rowEl, tabId), 420);
+});
+
+$('tab-list-container').addEventListener('mouseleave', hideTooltip);
+$('tab-list-container').addEventListener('scroll', hideTooltip, { passive: true });
+
+function showTooltip(rowEl, tabId) {
+    const t = currentTabs.find(x => x.tabId === tabId);
+    if (!t || t.state === 'suspended' || !rowEl.isConnected) return;
+
+    $('tt-title').textContent = t.title;
+    $('tt-cpu').textContent = `${t.cpu_pct}% · ${t.browser_cpu_share}% of browser`;
+    $('tt-share').textContent = `${t.load_share ?? 0}%`;
+    $('tt-net').textContent = formatKB(t.kb_transferred);
+    $('tt-idle').textContent = formatIdle(t.idle_mins);
+
+    tooltipPanel.hidden = false;
+    const rowRect = rowEl.getBoundingClientRect();
+    const panelRect = tooltipPanel.getBoundingClientRect();
+    let top = rowRect.bottom + 4;
+    if (top + panelRect.height > window.innerHeight - 8) {
+        top = rowRect.top - panelRect.height - 4;
+    }
+    tooltipPanel.style.top = `${Math.max(4, top)}px`;
+    tooltipPanel.style.left = `${Math.max(4, window.innerWidth - panelRect.width - 16)}px`;
+}
+
+function hideTooltip() {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+    hoverTabId = null;
+    tooltipPanel.hidden = true;
+}
+
+// ============================================================================
+// BUDGET STRIP
+// ============================================================================
+
+function renderBudget(budget, system) {
+    const strip = $('budget-strip');
+    const setBtn = $('btn-set-budget');
+    const clearBtn = $('btn-clear-budget');
+
+    if (!budget?.active) {
+        strip.hidden = true;
+        setBtn.hidden = false;
+        clearBtn.hidden = true;
         return;
     }
 
-    // Cache top suspendable tab for Act Now
-    const suspendable = data.tabs
-        .filter(t => t.is_background && t.state === 'normal' && !t.audible && !t.pinned)
-        .sort((a, b) => b.energyscore - a.energyscore);
-    lastAiTargetTabId = suspendable[0]?.tabId ?? null;
+    strip.hidden = false;
+    setBtn.hidden = true;
+    clearBtn.hidden = false;
 
-    renderSystemMetrics(data.system);
-    renderTabList(data.tabs);
-    renderHeatmap(data.heatmap_buffer); // PHASE 2
-    renderFooter(data.session, data.poll);
+    const label = $('budget-label');
+    const bar = $('budget-bar');
 
-    // PHASE 3 — Budget status bar
-    const budgetStatus = document.getElementById('budget-status');
-    const budgetBar = document.getElementById('budget-bar');
-    const budgetLabel = document.getElementById('budget-label');
-    const btnSetBudget = document.getElementById('btn-set-budget');
-    const btnClearBudget = document.getElementById('btn-clear-budget');
-    if (data.budget?.active) {
-        budgetStatus.style.display = 'block';
-        if (btnSetBudget) btnSetBudget.style.display = 'none';
-        if (btnClearBudget) btnClearBudget.style.display = 'block';
-        const batt = data.system?.battery_pct || 100;
-        const target = data.budget.targetPct || 20;
-        const pct = Math.max(0, Math.min(100, ((batt - target) / (100 - target)) * 100));
-        budgetBar.style.width = pct + '%';
-        if (pct > 40) budgetBar.style.background = 'var(--color-ok,#27AE60)';
-        else if (pct > 15) budgetBar.style.background = 'var(--color-warn,#F39C12)';
-        else budgetBar.style.background = 'var(--color-crit,#C0392B)';
-        budgetLabel.textContent = `${data.budget.onTrack ? '✅ On track' : '⚠️ Over budget'} — ${data.budget.remainingMins || 0}m remaining — target: ${target}%`;
-        if (data.budget.lastAction) budgetLabel.textContent += ` — ${data.budget.lastAction}`;
-    } else {
-        if (budgetStatus) budgetStatus.style.display = 'none';
-        if (btnSetBudget) btnSetBudget.style.display = 'block';
-        if (btnClearBudget) btnClearBudget.style.display = 'none';
+    if (budget.batteryUnavailable) {
+        bar.style.width = '100%';
+        bar.style.background = 'var(--warn)';
+        label.textContent = 'Budget set — battery status unavailable on this device';
+        return;
     }
+
+    const batt = system?.battery_pct ?? 100;
+    const target = budget.targetPct || 20;
+    const pct = Math.max(0, Math.min(100, ((batt - target) / (100 - target)) * 100));
+    bar.style.width = pct + '%';
+    bar.style.background = pct > 40 ? 'var(--ok)' : pct > 15 ? 'var(--warn)' : 'var(--crit)';
+
+    let text = `${budget.onTrack ? 'On track' : 'Over budget'} · ${budget.remainingMins ?? 0}m left · floor ${target}%`;
+    if (budget.lastAction) text += ` · ${budget.lastAction}`;
+    label.textContent = text;
 }
 
 // ============================================================================
-// COMPANION CHECK
+// FOOTER
 // ============================================================================
 
-async function checkCompanion() {
-    try {
-        const res = await fetch('http://localhost:9001/metrics', { signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
-            companionBadge.textContent = 'ONLINE';
-            companionBadge.className = 'badge-online';
-            enhancedToggle.checked = true;
-            // Hide setup instructions if showing
-            const setupEl = document.getElementById('companion-setup');
-            if (setupEl) setupEl.style.display = 'none';
-
-            // PHASE 2 — populate companion panel
-            const metrics = await res.json();
-            if (companionPanel) {
-                companionPanel.style.display = 'flex';
-                const tempIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>`;
-                const gpuIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
-                compTemp.innerHTML = metrics.cpu_temp_c === -1
-                    ? `${tempIcon} Temp: N/A`
-                    : `${tempIcon} Temp: ${metrics.cpu_temp_c.toFixed(1)}°C`;
-                compIgpu.innerHTML = metrics.igpu_pct === -1
-                    ? `${gpuIcon} iGPU: N/A`
-                    : `${gpuIcon} iGPU: ${metrics.igpu_pct.toFixed(1)}%`;
-                compSource.textContent = metrics.temp_source === 'acpi_thermal_zone' ? '(ACPI)' : '(unavailable)';
-            }
-        }
-    } catch (_) {
-        companionBadge.textContent = 'OFFLINE';
-        companionBadge.className = 'badge-offline';
-        enhancedToggle.checked = false;
-        if (companionPanel) companionPanel.style.display = 'none';
-    }
+function renderFooter(session) {
+    if (!session) return;
+    setText('footer-mwh', `${(session.total_mwh || 0).toFixed(1)} mWh`);
+    setText('footer-co2', formatCO2(session.total_co2_grams || 0));
 }
 
-// ============================================================================
-// EVENT LISTENERS
-// ============================================================================
-
-btnSuspendTop.addEventListener('click', () => {
-    btnSuspendTop.disabled = true;
-    btnSuspendTop.textContent = 'Suspending…';
-    chrome.runtime.sendMessage({ type: 'SUSPEND_TOP_N', n: 3 }, (res) => {
-        btnSuspendTop.textContent = `✓ ${res?.suspended || 0} suspended`;
-        setTimeout(() => {
-            loadAndRender();
-            btnSuspendTop.textContent = 'Suspend Idle Tabs';
-            btnSuspendTop.disabled = false;
-        }, 1500);
-    });
-});
-
-btnAiSuggest.addEventListener('click', () => {
-    aiPanel.style.display = 'block';
-    aiText.textContent = 'Generating suggestion…';
-    aiText.style.opacity = '0.6';
-    btnActNow.style.display = 'none'; // hide until response and target confirmed
-    btnAiSuggest.disabled = true;
-    chrome.runtime.sendMessage({ type: 'GET_AI_SUGGESTION' }, (response) => {
-        aiText.textContent = response?.suggestion || 'Unable to get suggestion.';
-        aiText.style.opacity = '1';
-        btnAiSuggest.disabled = false;
-        // Only show Act Now if there is actually a suspendable target available
-        btnActNow.style.display = lastAiTargetTabId !== null ? 'inline-block' : 'none';
-    });
-});
-
-btnActNow.addEventListener('click', () => {
-    if (lastAiTargetTabId !== null) {
-        chrome.runtime.sendMessage({ type: 'SUSPEND_SPECIFIC', tabId: lastAiTargetTabId });
-        lastAiTargetTabId = null;
-    }
-    aiPanel.style.display = 'none';
-    setTimeout(loadAndRender, 800);
-});
-
-// Hide tooltip when mouse leaves the tab list container entirely
-document.getElementById('tab-list-container').addEventListener('mouseleave', hideTooltip);
-
-// PHASE 2 — History button
-if (btnHistory) {
-    btnHistory.addEventListener('click', () => {
-        chrome.tabs.create({ url: 'history.html' });
-    });
-}
-
-// PHASE 2 — Re-check companion on toggle change
-const companionSetup = document.getElementById('companion-setup');
-enhancedToggle.addEventListener('change', async () => {
-    if (enhancedToggle.checked) {
-        // User wants to enable — try connecting
-        try {
-            const res = await fetch('http://localhost:9001/metrics', { signal: AbortSignal.timeout(2000) });
-            if (res.ok) {
-                // Online — hide setup, show panel
-                if (companionSetup) companionSetup.style.display = 'none';
-                checkCompanion();
-            } else {
-                throw new Error('not ok');
-            }
-        } catch (_) {
-            // Offline — show setup instructions
-            enhancedToggle.checked = false;
-            if (companionSetup) companionSetup.style.display = 'block';
-        }
-    } else {
-        // User disabled — hide panels
-        if (companionSetup) companionSetup.style.display = 'none';
-        if (companionPanel) companionPanel.style.display = 'none';
-        companionBadge.textContent = 'OFFLINE';
-        companionBadge.className = 'badge-offline';
-    }
-});
+// Lightweight 1s ticker — touches one text node, never re-renders the list.
+setInterval(() => {
+    if (!lastPollTime) return;
+    const ago = Math.max(0, Math.round((Date.now() - lastPollTime) / 1000));
+    setText('footer-updated', ago > 120 ? 'Stalled — reopen popup' : `Updated ${ago}s ago`);
+}, 1000);
 
 // ============================================================================
-// PHASE 2 — HEATMAP RENDERER
+// HEATMAP
 // ============================================================================
+
+const heatmapCanvas = $('heatmap-canvas');
+const heatmapCtx = heatmapCanvas ? heatmapCanvas.getContext('2d') : null;
+const faviconCache = new Map();
+let heatmapRerenderTimer = null;
 
 function scoreToColor(score) {
     if (score >= 70) return '#C0392B';
     if (score >= 30) {
-        // 30–70 → interpolate #F39C12 to #C0392B
         const t = (score - 30) / 40;
-        const r = Math.round(243 + (192 - 243) * t);
-        const g = Math.round(156 + (57 - 156) * t);
-        const b = Math.round(18 + (43 - 18) * t);
-        return `rgb(${r},${g},${b})`;
+        return `rgb(${Math.round(243 + (192 - 243) * t)},${Math.round(156 + (57 - 156) * t)},${Math.round(18 + (43 - 18) * t)})`;
     }
-    // 0–30 → interpolate #27AE60 to #F39C12
     const t = score / 30;
-    const r = Math.round(39 + (243 - 39) * t);
-    const g = Math.round(174 + (156 - 174) * t);
-    const b = Math.round(96 + (18 - 96) * t);
-    return `rgb(${r},${g},${b})`;
+    return `rgb(${Math.round(39 + (243 - 39) * t)},${Math.round(174 + (156 - 174) * t)},${Math.round(96 + (18 - 96) * t)})`;
 }
-
-const faviconCache = new Map();
 
 function renderHeatmap(buffer) {
     if (!heatmapCtx || !buffer) return;
@@ -484,7 +499,6 @@ function renderHeatmap(buffer) {
     const ctx = heatmapCtx;
     const dpr = window.devicePixelRatio || 1;
 
-    // Get entries sorted by tab order (same as tab list above), capped at 10
     const entries = Object.entries(buffer)
         .map(([id, data]) => ({ id, title: data.title, favicon: data.favicon, url: data.url, order: data.order ?? 999, scores: data.scores }))
         .filter(e => e.scores.length > 0)
@@ -495,7 +509,7 @@ function renderHeatmap(buffer) {
         canvas.width = 380 * dpr; canvas.height = 30 * dpr;
         canvas.style.width = '380px'; canvas.style.height = '30px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillStyle = '#666';
+        ctx.fillStyle = '#6E7487';
         ctx.font = '11px -apple-system, sans-serif';
         ctx.fillText('Waiting for data…', 140, 18);
         return;
@@ -508,7 +522,6 @@ function renderHeatmap(buffer) {
     const cssW = labelW + cols * (cellW + gapX);
     const cssH = Math.max(totalH + 4, 30);
 
-    // HiDPI: render at native resolution, display at CSS size
     canvas.width = cssW * dpr;
     canvas.height = cssH * dpr;
     canvas.style.width = cssW + 'px';
@@ -518,157 +531,325 @@ function renderHeatmap(buffer) {
     ctx.imageSmoothingQuality = 'high';
     ctx.clearRect(0, 0, cssW, cssH);
 
-    if (heatmapTabCount) {
-        heatmapTabCount.textContent = `${entries.length} tab${entries.length !== 1 ? 's' : ''}`;
-    }
+    setText('heatmap-tab-count', `${entries.length} tab${entries.length !== 1 ? 's' : ''}`);
 
     entries.forEach((entry, rowIdx) => {
         const y = rowIdx * (cellH + gapY);
         const iconSize = 14;
         const iconY = y + (cellH - iconSize) / 2;
 
-        // Resolve favicon: prefer Chrome's _favicon API (works for ALL URLs),
-        // fall back to direct favicon URL, then letter circle
+        // Chrome's _favicon API resolves icons for all URLs; fall back to a
+        // letter circle while it loads or if it fails.
         const tabUrl = entry.url || '';
-        const faviconApiUrl = tabUrl
+        const iconSrc = tabUrl
             ? `${chrome.runtime.getURL('_favicon/')}?pageUrl=${encodeURIComponent(tabUrl)}&size=64`
-            : '';
-        const directUrl = entry.favicon || '';
-        // Try _favicon API first, then direct, pick whichever is available
-        const iconSrc = faviconApiUrl || directUrl;
+            : (entry.favicon || '');
 
-        if (iconSrc) {
-            if (faviconCache.has(iconSrc)) {
-                const img = faviconCache.get(iconSrc);
-                if (img.complete && img.naturalHeight !== 0) {
-                    ctx.drawImage(img, (labelW - iconSize) / 2, iconY, iconSize, iconSize);
-                } else {
-                    drawLetterCircle(ctx, entry, y, labelW, cellH);
-                }
+        if (iconSrc && faviconCache.has(iconSrc)) {
+            const img = faviconCache.get(iconSrc);
+            if (img.complete && img.naturalHeight !== 0) {
+                ctx.drawImage(img, (labelW - iconSize) / 2, iconY, iconSize, iconSize);
             } else {
                 drawLetterCircle(ctx, entry, y, labelW, cellH);
-                const img = new Image();
-                img.onload = () => {
-                    faviconCache.set(iconSrc, img);
-                    if (window.__heatmapReRenderTimer) clearTimeout(window.__heatmapReRenderTimer);
-                    window.__heatmapReRenderTimer = setTimeout(() => renderHeatmap(buffer), 50);
-                };
-                img.onerror = () => faviconCache.set(iconSrc, new Image());
-                img.src = iconSrc;
             }
+        } else if (iconSrc) {
+            drawLetterCircle(ctx, entry, y, labelW, cellH);
+            const img = new Image();
+            img.onload = () => {
+                faviconCache.set(iconSrc, img);
+                clearTimeout(heatmapRerenderTimer);
+                heatmapRerenderTimer = setTimeout(() => renderHeatmap(buffer), 60);
+            };
+            img.onerror = () => faviconCache.set(iconSrc, new Image());
+            img.src = iconSrc;
         } else {
             drawLetterCircle(ctx, entry, y, labelW, cellH);
         }
 
-        // Draw cells: pad with empty cells on the left if fewer than 30
         for (let col = 0; col < cols; col++) {
             const dataIdx = col - (cols - entry.scores.length);
             const x = labelW + col * (cellW + gapX);
-            if (dataIdx < 0 || dataIdx >= entry.scores.length) {
-                ctx.fillStyle = '#1A1A2E'; // empty cell (surface color)
-            } else {
-                ctx.fillStyle = scoreToColor(entry.scores[dataIdx]);
-            }
+            ctx.fillStyle = (dataIdx < 0 || dataIdx >= entry.scores.length)
+                ? '#1D1D35'
+                : scoreToColor(entry.scores[dataIdx]);
             ctx.fillRect(x, y, cellW, cellH);
         }
     });
 }
 
-// ============================================================================
-// STARTUP
-// ============================================================================
-
 function drawLetterCircle(ctx, entry, y, labelW, cellH) {
     const cx = labelW / 2;
     const cy = y + cellH / 2;
-    const r = 6;
-    // Background circle
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#333';
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#24243F';
     ctx.fill();
-    // Letter
-    const letter = (entry.title || '?').charAt(0).toUpperCase();
     ctx.fillStyle = '#E86A1A';
     ctx.font = 'bold 8px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(letter, cx, cy);
+    ctx.fillText((entry.title || '?').charAt(0).toUpperCase(), cx, cy);
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadAndRender();
-    setInterval(loadAndRender, 3000);
-    checkCompanion();
+// ============================================================================
+// TOOLBAR ACTIONS
+// ============================================================================
 
-    // PHASE 3 — Budget section collapse/expand
-    const budgetHeader = document.getElementById('budget-header');
-    const budgetControls = document.getElementById('budget-controls');
-    const budgetArrow = document.getElementById('budget-toggle-arrow');
-    if (budgetHeader) {
-        budgetHeader.addEventListener('click', () => {
-            const show = budgetControls.style.display === 'none';
-            budgetControls.style.display = show ? 'block' : 'none';
-            budgetArrow.innerHTML = show ? '&#9650;' : '&#9660;';
-        });
-    }
+$('btn-suspend-top').addEventListener('click', () => {
+    const btn = $('btn-suspend-top');
+    btn.disabled = true;
+    btn.textContent = 'Suspending…';
+    chrome.runtime.sendMessage({ type: 'SUSPEND_TOP_N', n: 3 }, (res) => {
+        const n = res?.suspended || 0;
+        showToast(n > 0 ? `${n} tab${n !== 1 ? 's' : ''} suspended` : 'Nothing suspendable right now');
+        btn.textContent = 'Suspend idle';
+        btn.disabled = false;
+        refresh(true);
+    });
+});
 
-    // PHASE 3 — Set budget
-    const btnSetBudget = document.getElementById('btn-set-budget');
-    if (btnSetBudget) {
-        btnSetBudget.addEventListener('click', () => {
-            const pctInput = document.getElementById('budget-target-pct');
-            const timeInput = document.getElementById('budget-target-time');
-            const targetPct = parseInt(pctInput?.value);
-            const targetTimeStr = timeInput?.value;
-            if (!targetPct || targetPct < 10 || targetPct > 90 || !targetTimeStr) return;
-            // Build today's date with the target time
-            const [h, m] = targetTimeStr.split(':').map(Number);
-            const targetDate = new Date();
-            targetDate.setHours(h, m, 0, 0);
-            if (targetDate.getTime() <= Date.now()) targetDate.setDate(targetDate.getDate() + 1);
-            chrome.runtime.sendMessage({ type: 'SET_BUDGET', targetPct, targetTime: targetDate.toISOString() });
-            pctInput.value = ''; timeInput.value = '';
-        });
-    }
+$('btn-ai-suggest').addEventListener('click', () => {
+    const panel = $('ai-panel');
+    const text = $('ai-text');
+    const actBtn = $('btn-act-now');
+    panel.hidden = false;
+    text.textContent = 'Analyzing your tabs…';
+    text.classList.add('thinking');
+    actBtn.hidden = true;
+    $('btn-ai-suggest').disabled = true;
 
-    // PHASE 3 — Clear budget
-    const btnClearBudget = document.getElementById('btn-clear-budget');
-    if (btnClearBudget) {
-        btnClearBudget.addEventListener('click', () => {
-            chrome.runtime.sendMessage({ type: 'CLEAR_BUDGET' });
-        });
-    }
+    chrome.runtime.sendMessage({ type: 'GET_AI_SUGGESTION' }, (response) => {
+        text.textContent = response?.suggestion || 'Unable to get a suggestion.';
+        text.classList.remove('thinking');
+        $('btn-ai-suggest').disabled = false;
 
-    // AI Settings — collapse/expand + key management
-    const aiHeader = document.getElementById('ai-settings-header');
-    const aiBody = document.getElementById('ai-settings-body');
-    const aiKeyStatus = document.getElementById('ai-key-status');
-    if (aiHeader && aiBody) {
-        // Show status on load
-        chrome.storage.local.get('groqApiKey', (data) => {
-            aiKeyStatus.textContent = data.groqApiKey ? '✓ Key set' : '⚠ No key';
-            aiKeyStatus.style.color = data.groqApiKey ? 'var(--color-ok,#27AE60)' : 'var(--color-warn,#F39C12)';
-        });
-        aiHeader.addEventListener('click', () => {
-            aiBody.style.display = aiBody.style.display === 'none' ? 'block' : 'none';
-        });
-    }
-    const btnSaveKey = document.getElementById('btn-save-key');
-    if (btnSaveKey) {
-        btnSaveKey.addEventListener('click', () => {
-            const keyInput = document.getElementById('groq-key-input');
-            const key = keyInput?.value?.trim();
-            if (!key) return;
-            chrome.storage.local.set({ groqApiKey: key }, () => {
-                keyInput.value = '';
-                if (aiKeyStatus) {
-                    aiKeyStatus.textContent = '✓ Key saved';
-                    aiKeyStatus.style.color = 'var(--color-ok,#27AE60)';
-                }
-            });
-        });
+        aiTarget = response?.targetTabId
+            ? { tabId: response.targetTabId, title: response.targetTitle || 'tab' }
+            : null;
+        if (aiTarget) {
+            actBtn.textContent = `Suspend “${truncate(aiTarget.title, 26)}”`;
+            actBtn.hidden = false;
+        }
+    });
+});
+
+$('btn-act-now').addEventListener('click', () => {
+    if (!aiTarget) return;
+    const { tabId, title } = aiTarget;
+    aiTarget = null;
+    chrome.runtime.sendMessage({ type: 'SUSPEND_SPECIFIC', tabId }, (res) => {
+        showToast(res?.success ? `Suspended “${truncate(title, 32)}”` : (res?.error || 'Could not suspend tab'));
+        refresh(true);
+    });
+    $('ai-panel').hidden = true;
+});
+
+$('btn-ai-dismiss').addEventListener('click', () => {
+    $('ai-panel').hidden = true;
+    aiTarget = null;
+});
+
+$('btn-history').addEventListener('click', () => {
+    chrome.tabs.create({ url: 'history.html' });
+});
+
+// ============================================================================
+// SETTINGS DRAWER
+// ============================================================================
+
+$('btn-settings').addEventListener('click', () => {
+    const drawer = $('settings-drawer');
+    const open = drawer.hidden;
+    drawer.hidden = !open;
+    $('btn-settings').setAttribute('aria-expanded', String(open));
+    if (open) {
+        loadDrawerState();
+        checkCompanion();
     }
 });
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        $('settings-drawer').hidden = true;
+        $('btn-settings').setAttribute('aria-expanded', 'false');
+        $('ai-panel').hidden = true;
+        hideTooltip();
+    }
+});
+
+async function loadDrawerState() {
+    const data = await chrome.storage.local.get(['groqApiKey', 'settings', 'energyBudget']);
+
+    const status = $('ai-key-status');
+    status.textContent = data.groqApiKey ? '✓ Key set' : 'No key';
+    status.style.color = data.groqApiKey ? 'var(--ok)' : 'var(--warn)';
+
+    $('auto-suspend-select').value = String(data.settings?.autoSuspendMins ?? 5);
+
+    $('btn-set-budget').hidden = !!data.energyBudget;
+    $('btn-clear-budget').hidden = !data.energyBudget;
+}
+
+$('auto-suspend-select').addEventListener('change', async (e) => {
+    const autoSuspendMins = parseInt(e.target.value, 10) || 0;
+    const data = await chrome.storage.local.get('settings');
+    await chrome.storage.local.set({ settings: { ...(data.settings || {}), autoSuspendMins } });
+    showToast(autoSuspendMins === 0 ? 'Auto-suspend off' : `Auto-suspend after ${autoSuspendMins} min idle`);
+});
+
+$('btn-save-key').addEventListener('click', () => {
+    const keyInput = $('groq-key-input');
+    const key = keyInput.value.trim();
+    if (!key) return;
+    chrome.storage.local.set({ groqApiKey: key }, () => {
+        keyInput.value = '';
+        const status = $('ai-key-status');
+        status.textContent = '✓ Key saved';
+        status.style.color = 'var(--ok)';
+        showToast('API key saved');
+    });
+});
+
+$('btn-set-budget').addEventListener('click', () => {
+    const targetPct = parseInt($('budget-target-pct').value, 10);
+    const targetTimeStr = $('budget-target-time').value;
+    if (!targetPct || targetPct < 10 || targetPct > 90 || !targetTimeStr) {
+        showToast('Enter a floor (10–90%) and a time');
+        return;
+    }
+    const [h, m] = targetTimeStr.split(':').map(Number);
+    const targetDate = new Date();
+    targetDate.setHours(h, m, 0, 0);
+    if (targetDate.getTime() <= Date.now()) targetDate.setDate(targetDate.getDate() + 1);
+    chrome.runtime.sendMessage(
+        { type: 'SET_BUDGET', targetPct, targetTime: targetDate.toISOString() },
+        () => {
+            showToast(`Budget set: stay above ${targetPct}%`);
+            $('budget-target-pct').value = '';
+            $('budget-target-time').value = '';
+            loadDrawerState();
+            refresh(true);
+        }
+    );
+});
+
+$('btn-clear-budget').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'CLEAR_BUDGET' }, () => {
+        showToast('Budget cleared');
+        loadDrawerState();
+        refresh(true);
+    });
+});
+
+// ============================================================================
+// COMPANION
+// ============================================================================
+
+async function checkCompanion() {
+    const badge = $('companion-badge');
+    const chip = $('chip-comp');
+    try {
+        const res = await fetch(COMPANION_URL, { signal: AbortSignal.timeout(2500) });
+        if (!res.ok) throw new Error('not ok');
+        const metrics = await res.json();
+
+        badge.textContent = 'ONLINE';
+        badge.className = 'badge-online';
+        $('enhanced-toggle').checked = true;
+        $('companion-setup').hidden = true;
+        $('companion-panel').hidden = false;
+
+        const temp = metrics.cpu_temp_c === -1 ? 'N/A' : `${metrics.cpu_temp_c.toFixed(1)}°C`;
+        const igpu = metrics.igpu_pct === -1 ? 'N/A' : `${metrics.igpu_pct.toFixed(1)}%`;
+        setText('comp-temp', `Temp: ${temp}`);
+        setText('comp-igpu', `iGPU: ${igpu}`);
+        setText('comp-source', metrics.temp_source === 'acpi_thermal_zone' ? '(ACPI)' : '');
+
+        if (metrics.cpu_temp_c !== -1) {
+            chip.hidden = false;
+            setText('chip-comp-val', temp);
+        } else {
+            chip.hidden = true;
+        }
+    } catch (_) {
+        badge.textContent = 'OFFLINE';
+        badge.className = 'badge-offline';
+        $('enhanced-toggle').checked = false;
+        $('companion-panel').hidden = true;
+        chip.hidden = true;
+    }
+}
+
+$('enhanced-toggle').addEventListener('change', async (e) => {
+    if (e.target.checked) {
+        await checkCompanion();
+        if (!$('enhanced-toggle').checked) {
+            $('companion-setup').hidden = false; // still offline — show setup help
+        }
+    } else {
+        $('companion-setup').hidden = true;
+        $('companion-panel').hidden = true;
+        $('chip-comp').hidden = true;
+        $('companion-badge').textContent = 'OFFLINE';
+        $('companion-badge').className = 'badge-offline';
+    }
+});
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+function setText(id, val) {
+    const el = $(id);
+    if (el && el.textContent !== String(val)) el.textContent = val;
+}
+
+function truncate(s, n) {
+    return s && s.length > n ? s.slice(0, n) + '…' : (s || '');
+}
+
+function showToast(msg) {
+    const toast = $('toast');
+    toast.textContent = msg;
+    toast.hidden = false;
+    // Force reflow so the transition replays on rapid successive toasts.
+    void toast.offsetWidth;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        toast.classList.remove('show');
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 200);
+    }, 2200);
+}
+
+// ============================================================================
+// DATA REFRESH
+// ============================================================================
+
+async function refresh(force = false) {
+    let data;
+    try {
+        data = await chrome.storage.session.get(
+            ['tabs', 'system', 'session', 'poll', 'heatmap_buffer', 'budget']
+        );
+    } catch (_) { return; }
+
+    if (!data?.tabs) return; // keep skeletons until the first sample lands
+
+    const stamp = data.poll?.last_updated || 0;
+    lastPollTime = stamp || lastPollTime;
+    if (!force && stamp === lastPollStamp) return; // nothing new — skip render
+    lastPollStamp = stamp;
+
+    renderSystemChips(data.system);
+    renderTabList(data.tabs);
+    renderBudget(data.budget, data.system);
+    renderFooter(data.session);
+    renderHeatmap(data.heatmap_buffer);
+}
+
+refresh(true);
+setInterval(refresh, REFRESH_MS);
+checkCompanion();

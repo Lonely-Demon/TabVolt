@@ -1,12 +1,20 @@
-// analytics.js — Grafana-style analytics dashboard
-// Reads from IndexedDB (tab_cycles, suspend_events, session_meta)
-// Renders Chart.js charts + stat cards + tree equivalency
+// analytics.js — Grafana-style analytics dashboard (ES module)
+// Reads from IndexedDB via the shared storage.js layer — time-filtered views
+// use the timestamp index instead of loading whole stores into memory.
+// Renders Chart.js charts + stat cards + tree equivalency.
 
-const ADB_NAME = 'TabVoltDB';
-const ADB_VERSION = 2;
+import { initDB, getAllRecords, getRecordsSince } from './storage.js';
 
 // Tree CO2 absorption constant: one mature tree absorbs ~21,770 g CO2/year
 const TREE_CO2_PER_DAY_G = 21770 / 365; // ~59.6 g/day
+
+// Legacy suspend events (pre-2.0) stored a per-cycle rate measured at 30s
+// cycles; convert with that era's constant. New events carry mwh_per_hour.
+const LEGACY_CYCLES_PER_HOUR = 120;
+
+// Assumed suspension benefit window when a tab never reappears in the data.
+const DEFAULT_SAVINGS_HOURS = 0.5;
+const MAX_SAVINGS_HOURS = 1;
 
 // Chart instances (for cleanup on re-render)
 let chartInstances = {};
@@ -14,49 +22,10 @@ let analyticsDB = null;
 let analyticsRange = 'today';
 
 // ============================================================================
-// DB ACCESS
-// ============================================================================
-
-function openAnalyticsDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(ADB_NAME, ADB_VERSION);
-        req.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains('tab_cycles')) {
-                const s = db.createObjectStore('tab_cycles', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('session_id', 'session_id', { unique: false });
-                s.createIndex('domain', 'domain', { unique: false });
-                s.createIndex('timestamp', 'timestamp', { unique: false });
-            }
-            if (!db.objectStoreNames.contains('session_meta'))
-                db.createObjectStore('session_meta', { keyPath: 'session_id' });
-            if (!db.objectStoreNames.contains('domain_patterns'))
-                db.createObjectStore('domain_patterns', { keyPath: 'domain' });
-            if (!db.objectStoreNames.contains('suspend_events')) {
-                const se = db.createObjectStore('suspend_events', { keyPath: 'id', autoIncrement: true });
-                se.createIndex('session_id', 'session_id', { unique: false });
-                se.createIndex('timestamp', 'timestamp', { unique: false });
-            }
-        };
-        req.onsuccess = (e) => resolve(e.target.result);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-function getAllRecords(db, storeName) {
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, 'readonly');
-        const req = tx.objectStore(storeName).getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-// ============================================================================
 // TIME FILTERING
 // ============================================================================
 
-function getTimeRange() {
+function getRangeCutoff() {
     const now = Date.now();
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -67,11 +36,6 @@ function getTimeRange() {
         case '30d': return now - 30 * 24 * 60 * 60 * 1000;
         default: return 0;
     }
-}
-
-function filterByTime(records) {
-    const cutoff = getTimeRange();
-    return records.filter(r => (r.timestamp || 0) >= cutoff);
 }
 
 // ============================================================================
@@ -90,6 +54,47 @@ function setupChartDefaults() {
 }
 
 // ============================================================================
+// SAVINGS MODEL — one estimator shared by every chart and stat card
+// ============================================================================
+
+/** mWh/hour this tab was drawing when it was suspended. */
+function eventHourlyRate(evt) {
+    if (evt.mwh_per_hour != null) return evt.mwh_per_hour;
+    return (evt.pre_suspend_mwh_rate || 0) * LEGACY_CYCLES_PER_HOUR;
+}
+
+/**
+ * Estimated mWh saved by one suspend event: rate × time-suspended, where
+ * time-suspended runs until the tab reappears in the cycle data (capped),
+ * or a conservative default when it never does.
+ */
+function estimateEventSavings(evt, cyclesByTab) {
+    const later = cyclesByTab.get(evt.tab_id);
+    let durationHrs = DEFAULT_SAVINGS_HOURS;
+    if (later) {
+        // cyclesByTab lists timestamps sorted ascending; find first after evt.
+        const reappear = later.find(ts => ts > evt.timestamp);
+        if (reappear) {
+            durationHrs = Math.min((reappear - evt.timestamp) / 3600000, MAX_SAVINGS_HOURS);
+        }
+    }
+    return eventHourlyRate(evt) * durationHrs;
+}
+
+/** Index cycle timestamps by tab_id once, so savings math is O(n + m). */
+function indexCyclesByTab(cycles) {
+    const byTab = new Map();
+    for (const c of cycles) {
+        if (c.tab_id == null) continue;
+        let arr = byTab.get(c.tab_id);
+        if (!arr) { arr = []; byTab.set(c.tab_id, arr); }
+        arr.push(c.timestamp || 0);
+    }
+    for (const arr of byTab.values()) arr.sort((a, b) => a - b);
+    return byTab;
+}
+
+// ============================================================================
 // STAT CARDS
 // ============================================================================
 
@@ -97,13 +102,12 @@ function renderStatCards(cycles, suspendEvents, sessions) {
     const totalMwh = cycles.reduce((s, c) => s + (c.mwh_estimated || 0), 0);
     const totalCO2 = cycles.reduce((s, c) => s + (c.co2_grams || 0), 0);
 
-    // Calculate savings: each suspend event saved energy for ~30 min (one poll cycle minimum)
-    // More accurate: estimate duration until tab_id reappears or session ends
-    const savedMwh = calculateSavings(suspendEvents, cycles);
+    const cyclesByTab = indexCyclesByTab(cycles);
+    const savedMwh = suspendEvents.reduce((s, e) => s + estimateEventSavings(e, cyclesByTab), 0);
     const CO2_PER_MWH = totalMwh > 0 ? totalCO2 / totalMwh : 0.82;
     const savedCO2 = savedMwh * CO2_PER_MWH;
 
-    // Peak CPU: max sum of all tab CPU% in a single timestamp
+    // Peak CPU: max sum of all tab CPU% in a single flush window
     const cpuByTime = {};
     for (const c of cycles) {
         const t = c.timestamp || 0;
@@ -112,7 +116,6 @@ function renderStatCards(cycles, suspendEvents, sessions) {
     const peakCPU = Object.values(cpuByTime).length > 0
         ? Math.max(...Object.values(cpuByTime)) : 0;
 
-    // Tabs monitored
     const tabIds = new Set(cycles.map(c => c.tab_id).filter(Boolean));
     const tabCount = tabIds.size || sessions.reduce((m, s) => Math.max(m, s.total_tabs_monitored || 0), 0);
 
@@ -126,40 +129,12 @@ function renderStatCards(cycles, suspendEvents, sessions) {
     return { totalMwh, totalCO2, savedMwh, savedCO2 };
 }
 
-function calculateSavings(suspendEvents, cycles) {
-    if (suspendEvents.length === 0) return 0;
-
-    let totalSaved = 0;
-    for (const evt of suspendEvents) {
-        // Estimate how long the tab stayed suspended
-        // Find next cycle where this tab_id reappears (not discarded)
-        const laterCycles = cycles.filter(c =>
-            c.tab_id === evt.tab_id &&
-            c.timestamp > evt.timestamp
-        ).sort((a, b) => a.timestamp - b.timestamp);
-
-        // Duration = time until tab reappears, capped at 60 minutes
-        let durationMs;
-        if (laterCycles.length > 0) {
-            durationMs = Math.min(laterCycles[0].timestamp - evt.timestamp, 60 * 60 * 1000);
-        } else {
-            durationMs = 30 * 60 * 1000; // Default: 30 min if no reappearance
-        }
-
-        const durationHrs = durationMs / (60 * 60 * 1000);
-        // mWh rate from event is per-cycle (~30s). Convert to hourly rate
-        const hourlyRate = (evt.pre_suspend_mwh_rate || 0) * 120; // 120 cycles per hour
-        totalSaved += hourlyRate * durationHrs;
-    }
-    return totalSaved;
-}
-
 // ============================================================================
 // CHARTS
 // ============================================================================
 
 function renderPowerTimeline(cycles) {
-    const data = aggregateTimelineMwh(cycles);
+    const data = aggregateTimeline(cycles, 'mwh_estimated');
     destroyChart('chart-power');
 
     const ctx = document.getElementById('chart-power').getContext('2d');
@@ -186,7 +161,7 @@ function renderPowerTimeline(cycles) {
 }
 
 function renderCO2Timeline(cycles) {
-    const data = aggregateTimelineCO2(cycles);
+    const data = aggregateTimeline(cycles, 'co2_grams');
     destroyChart('chart-co2');
 
     const ctx = document.getElementById('chart-co2').getContext('2d');
@@ -221,33 +196,26 @@ function renderCPUTimeline(cycles) {
     const sortedDomains = Object.entries(domainTotals).sort((a, b) => b[1] - a[1]);
     const topDomains = sortedDomains.slice(0, 5).map(d => d[0]);
 
-    // Time buckets
     const buckets = createTimeBuckets(cycles);
     const domainColors = ['#3498DB', '#E74C3C', '#F39C12', '#9B59B6', '#1ABC9C', '#95A5A6'];
 
-    const datasets = topDomains.map((domain, i) => {
-        const values = buckets.labels.map((_, bi) => {
-            return buckets.bucketCycles[bi]
-                .filter(c => c.domain === domain)
-                .reduce((s, c) => s + (c.cpu_pct || 0), 0) / Math.max(1, buckets.bucketCycles[bi].filter(c => c.domain === domain).length);
-        });
-        return {
-            label: domain || '(unknown)',
-            data: values,
-            borderColor: domainColors[i],
-            backgroundColor: domainColors[i] + '40',
-            borderWidth: 1.5,
-            fill: true,
-            tension: 0.3
-        };
-    });
+    const avgCpuFor = (bucket, match) => {
+        const rows = bucket.filter(match);
+        if (rows.length === 0) return 0;
+        return rows.reduce((s, c) => s + (c.cpu_pct || 0), 0) / rows.length;
+    };
 
-    // Add "Other"
-    const otherValues = buckets.labels.map((_, bi) => {
-        return buckets.bucketCycles[bi]
-            .filter(c => !topDomains.includes(c.domain))
-            .reduce((s, c) => s + (c.cpu_pct || 0), 0) / Math.max(1, buckets.bucketCycles[bi].filter(c => !topDomains.includes(c.domain)).length || 1);
-    });
+    const datasets = topDomains.map((domain, i) => ({
+        label: domain || '(unknown)',
+        data: buckets.bucketCycles.map(b => avgCpuFor(b, c => c.domain === domain)),
+        borderColor: domainColors[i],
+        backgroundColor: domainColors[i] + '40',
+        borderWidth: 1.5,
+        fill: true,
+        tension: 0.3
+    }));
+
+    const otherValues = buckets.bucketCycles.map(b => avgCpuFor(b, c => !topDomains.includes(c.domain)));
     if (otherValues.some(v => v > 0)) {
         datasets.push({
             label: 'Other', data: otherValues,
@@ -326,8 +294,6 @@ function renderWorstOffenders(cycles) {
         .sort((a, b) => b.mwh - a.mwh)
         .slice(0, 5);
 
-    const maxMwh = sorted.length > 0 ? sorted[0].mwh : 1;
-
     destroyChart('chart-offenders');
     chartInstances['chart-offenders'] = new Chart(document.getElementById('chart-offenders').getContext('2d'), {
         type: 'bar',
@@ -363,15 +329,14 @@ function renderWorstOffenders(cycles) {
     });
 }
 
-function renderSavingsChart(suspendEvents) {
+function renderSavingsChart(suspendEvents, cyclesByTab) {
     const buckets = {};
     for (const evt of suspendEvents) {
         const date = new Date(evt.timestamp);
         const key = analyticsRange === 'today'
             ? date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
             : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        const mwhSaved = (evt.pre_suspend_mwh_rate || 0) * 60; // Estimate 30 min savings (60 cycles)
-        buckets[key] = (buckets[key] || 0) + mwhSaved;
+        buckets[key] = (buckets[key] || 0) + estimateEventSavings(evt, cyclesByTab);
     }
 
     const labels = Object.keys(buckets);
@@ -408,8 +373,7 @@ function renderSavingsChart(suspendEvents) {
 function renderTreeSection(stats) {
     const { savedCO2, totalCO2 } = stats;
 
-    // Saved side
-    const savedPct = TREE_CO2_PER_DAY_G > 0 ? (savedCO2 / TREE_CO2_PER_DAY_G) * 100 : 0;
+    const savedPct = (savedCO2 / TREE_CO2_PER_DAY_G) * 100;
     setText('tree-saved-val', savedCO2.toFixed(3));
     setWidth('tree-saved-bar', Math.min(100, savedPct));
     const savedEquivEl = document.getElementById('tree-saved-equiv');
@@ -422,8 +386,7 @@ function renderTreeSection(stats) {
         }
     }
 
-    // Emitted side
-    const usedPct = TREE_CO2_PER_DAY_G > 0 ? (totalCO2 / TREE_CO2_PER_DAY_G) * 100 : 0;
+    const usedPct = (totalCO2 / TREE_CO2_PER_DAY_G) * 100;
     setText('tree-used-val', totalCO2.toFixed(3));
     setWidth('tree-used-bar', Math.min(100, usedPct));
     const usedEquivEl = document.getElementById('tree-used-equiv');
@@ -441,18 +404,10 @@ function renderTreeSection(stats) {
 // TIMELINE HELPERS
 // ============================================================================
 
-function aggregateTimelineMwh(cycles) {
+function aggregateTimeline(cycles, field) {
     const buckets = createTimeBuckets(cycles);
     const values = buckets.bucketCycles.map(b =>
-        Math.round(b.reduce((s, c) => s + (c.mwh_estimated || 0), 0) * 1000) / 1000
-    );
-    return { labels: buckets.labels, values };
-}
-
-function aggregateTimelineCO2(cycles) {
-    const buckets = createTimeBuckets(cycles);
-    const values = buckets.bucketCycles.map(b =>
-        Math.round(b.reduce((s, c) => s + (c.co2_grams || 0), 0) * 1000) / 1000
+        Math.round(b.reduce((s, c) => s + (c[field] || 0), 0) * 1000) / 1000
     );
     return { labels: buckets.labels, values };
 }
@@ -465,33 +420,28 @@ function createTimeBuckets(cycles) {
     const maxT = sorted[sorted.length - 1].timestamp;
     const rangeMs = maxT - minT;
 
-    // Choose bucket size based on range
     let bucketMs, formatFn;
     if (rangeMs < 6 * 60 * 60 * 1000) {
-        // < 6 hours: 5-min buckets
         bucketMs = 5 * 60 * 1000;
         formatFn = t => new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     } else if (rangeMs < 48 * 60 * 60 * 1000) {
-        // < 2 days: 30-min buckets
         bucketMs = 30 * 60 * 1000;
         formatFn = t => new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     } else {
-        // multi-day: daily buckets
         bucketMs = 24 * 60 * 60 * 1000;
         formatFn = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
 
+    // Single pass: assign each (sorted) cycle to its bucket index.
     const labels = [];
     const bucketCycles = [];
-    let bucketStart = minT;
-
-    while (bucketStart <= maxT) {
-        const bucketEnd = bucketStart + bucketMs;
-        labels.push(formatFn(bucketStart));
-        bucketCycles.push(sorted.filter(c =>
-            (c.timestamp || 0) >= bucketStart && (c.timestamp || 0) < bucketEnd
-        ));
-        bucketStart = bucketEnd;
+    for (const c of sorted) {
+        const idx = Math.floor(((c.timestamp || 0) - minT) / bucketMs);
+        while (labels.length <= idx) {
+            labels.push(formatFn(minT + labels.length * bucketMs));
+            bucketCycles.push([]);
+        }
+        bucketCycles[idx].push(c);
     }
 
     // Limit to max 50 buckets for readability
@@ -551,39 +501,41 @@ function setWidth(id, pct) {
 
 async function renderAnalytics() {
     try {
-        if (!analyticsDB) analyticsDB = await openAnalyticsDB();
+        if (!analyticsDB) analyticsDB = await initDB();
 
-        const allCycles = await getAllRecords(analyticsDB, 'tab_cycles');
-        const allSuspendEvents = await getAllRecords(analyticsDB, 'suspend_events');
-        const allSessions = await getAllRecords(analyticsDB, 'session_meta');
-
-        const cycles = filterByTime(allCycles);
-        const suspendEvents = filterByTime(allSuspendEvents);
+        const cutoff = getRangeCutoff();
+        // Range-indexed reads — only 'All time' touches the full stores.
+        const [cycles, suspendEvents, allSessions] = await Promise.all([
+            cutoff > 0
+                ? getRecordsSince(analyticsDB, 'tab_cycles', cutoff)
+                : getAllRecords(analyticsDB, 'tab_cycles'),
+            cutoff > 0
+                ? getRecordsSince(analyticsDB, 'suspend_events', cutoff)
+                : getAllRecords(analyticsDB, 'suspend_events'),
+            getAllRecords(analyticsDB, 'session_meta')
+        ]);
 
         if (cycles.length === 0) {
-            // Show empty state for all stat cards
             ['stat-power-val', 'stat-co2-val', 'stat-power-saved-val', 'stat-co2-saved-val', 'stat-peak-cpu-val', 'stat-tabs-val'].forEach(id => setText(id, '0'));
-            // Destroy existing charts
             Object.keys(chartInstances).forEach(k => destroyChart(k));
             renderTreeSection({ savedCO2: 0, totalCO2: 0 });
             return;
         }
 
+        const cyclesByTab = indexCyclesByTab(cycles);
         const stats = renderStatCards(cycles, suspendEvents, allSessions);
         renderPowerTimeline(cycles);
         renderCO2Timeline(cycles);
         renderCPUTimeline(cycles);
         renderDomainDonut(cycles);
         renderWorstOffenders(cycles);
-        renderSavingsChart(suspendEvents);
+        renderSavingsChart(suspendEvents, cyclesByTab);
         renderTreeSection(stats);
 
-        // PHASE 3 — Savings equivalent card
         const seVal = document.getElementById('savings-equiv-value');
         const seDet = document.getElementById('savings-equiv-detail');
         if (seVal && seDet) {
-            const savedCO2g = stats.savedCO2 || 0;
-            const kmAvoided = (savedCO2g / 1000 / 0.13); // 130g CO2/km
+            const kmAvoided = (stats.savedCO2 || 0) / 130; // ~130 g CO₂ per km
             seVal.textContent = `${stats.savedMwh.toFixed(1)} mWh saved`;
             seDet.textContent = `${kmAvoided.toFixed(2)} km of driving avoided`;
         }
@@ -600,7 +552,6 @@ async function renderAnalytics() {
 document.addEventListener('DOMContentLoaded', () => {
     setupChartDefaults();
 
-    // Tab navigation
     const tabBtns = document.querySelectorAll('.tab-nav-btn');
     const tabContents = document.querySelectorAll('.tab-content');
 
@@ -612,12 +563,10 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             document.getElementById('tab-' + target).classList.add('active');
 
-            // Trigger chart render when analytics tab is activated
             if (target === 'analytics') renderAnalytics();
         });
     });
 
-    // Analytics range pills
     document.querySelectorAll('.range-pill').forEach(pill => {
         pill.addEventListener('click', () => {
             document.querySelectorAll('.range-pill').forEach(p => p.classList.remove('active'));
@@ -627,6 +576,5 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Auto-render analytics on load (it's the default tab)
     renderAnalytics();
 });

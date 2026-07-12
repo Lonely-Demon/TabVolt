@@ -1,10 +1,18 @@
 // companion/main.go — TabVolt Local Telemetry Companion
-// Single file Go program. Serves hardware metrics on :9001
-// PHASE 2
-
+// Single-file Go program. Serves hardware metrics on 127.0.0.1:9001.
+//
+// Design:
+//   - One dedicated collector goroutine, pinned to an OS thread with COM
+//     initialized once, polls WMI every collectInterval and updates a cache.
+//   - HTTP requests only ever read the cache, so /metrics responds in
+//     microseconds regardless of how slow WMI is.
+//   - Listens on loopback only, and CORS is restricted to extension origins —
+//     arbitrary websites cannot use this server as a hardware fingerprint
+//     oracle.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,7 +29,12 @@ import (
 	"github.com/go-ole/go-ole/oleutil"
 )
 
-// MetricsResponse is the JSON contract with the extension
+const (
+	listenAddr      = "127.0.0.1:9001"
+	collectInterval = 5 * time.Second
+)
+
+// MetricsResponse is the JSON contract with the extension.
 type MetricsResponse struct {
 	CPUTempC   float64 `json:"cpu_temp_c"`
 	IGPUPct    float64 `json:"igpu_pct"`
@@ -29,22 +43,16 @@ type MetricsResponse struct {
 }
 
 var (
-	cacheMu      sync.Mutex
-	cachedResult MetricsResponse
-)
-
-func init() {
-	// Default cached values — both unavailable
+	cacheMu      sync.RWMutex
 	cachedResult = MetricsResponse{
 		CPUTempC:   -1.0,
 		IGPUPct:    -1.0,
 		Timestamp:  time.Now().Format(time.RFC3339),
 		TempSource: "unavailable",
 	}
-}
+)
 
 // connectWMI creates a WMI service connection to the given namespace.
-// Returns the service IDispatch or nil on error.
 func connectWMI(namespace string) (*ole.IDispatch, error) {
 	unknown, err := oleutil.CreateObject("WbemScripting.SWbemLocator")
 	if err != nil {
@@ -65,7 +73,7 @@ func connectWMI(namespace string) (*ole.IDispatch, error) {
 	return service.ToIDispatch(), nil
 }
 
-// queryCPUTemp uses WMI MSAcpi_ThermalZoneTemperature (root\wmi)
+// queryCPUTemp uses WMI MSAcpi_ThermalZoneTemperature (root\wmi).
 // Must be called from a thread with COM initialized.
 func queryCPUTemp() (float64, string) {
 	svc, err := connectWMI(`root\wmi`)
@@ -89,13 +97,11 @@ func queryCPUTemp() (float64, string) {
 		log.Printf("[temp] Count failed: %v", err)
 		return -1.0, "unavailable"
 	}
-	count := int(countVar.Val)
-	if count == 0 {
+	if int(countVar.Val) == 0 {
 		log.Println("[temp] No thermal zones found")
 		return -1.0, "unavailable"
 	}
 
-	// Take first thermal zone
 	item, err := oleutil.CallMethod(resultDisp, "ItemIndex", 0)
 	if err != nil {
 		log.Printf("[temp] ItemIndex failed: %v", err)
@@ -110,18 +116,15 @@ func queryCPUTemp() (float64, string) {
 		return -1.0, "unavailable"
 	}
 
-	// Value is in tenths of Kelvin
+	// Value is in tenths of Kelvin.
 	raw := toFloat64(tempVal)
 	if raw == 0 {
 		return -1.0, "unavailable"
 	}
-
-	celsius := (raw / 10.0) - 273.15
-	log.Printf("[temp] Raw=%v  Celsius=%.1f", raw, celsius)
-	return celsius, "acpi_thermal_zone"
+	return (raw / 10.0) - 273.15, "acpi_thermal_zone"
 }
 
-// queryIGPU uses WMI Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine
+// queryIGPU uses WMI Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine.
 // Must be called from a thread with COM initialized.
 func queryIGPU() float64 {
 	svc, err := connectWMI(`root\cimv2`)
@@ -147,11 +150,9 @@ func queryIGPU() float64 {
 	}
 	count := int(countVar.Val)
 	if count == 0 {
-		log.Println("[igpu] No GPU engine entries found")
 		return -1.0
 	}
 
-	log.Printf("[igpu] Found %d 3D engine entries", count)
 	var totalUtil float64
 	for i := 0; i < count; i++ {
 		item, err := oleutil.CallMethod(resultDisp, "ItemIndex", i)
@@ -161,13 +162,10 @@ func queryIGPU() float64 {
 		itemDisp := item.ToIDispatch()
 		utilVal, err := oleutil.GetProperty(itemDisp, "UtilizationPercentage")
 		if err == nil {
-			v := toFloat64(utilVal)
-			totalUtil += v
+			totalUtil += toFloat64(utilVal)
 		}
 		itemDisp.Release()
 	}
-
-	log.Printf("[igpu] Total utilization: %.1f%%", totalUtil)
 	return totalUtil
 }
 
@@ -178,7 +176,6 @@ func toFloat64(v *ole.VARIANT) float64 {
 	}
 	val := v.Value()
 	if val == nil {
-		// Fall back to raw Val field
 		return float64(v.Val)
 	}
 	switch n := val.(type) {
@@ -214,88 +211,105 @@ func toFloat64(v *ole.VARIANT) float64 {
 		}
 		return 0
 	default:
-		// Last resort: use the raw Val field
 		return float64(v.Val)
 	}
 }
 
-// collectMetrics runs both WMI queries on a dedicated, COM-initialized OS thread.
-// Times out after 3 seconds on first call, returning cached values.
-func collectMetrics() MetricsResponse {
-	type result struct {
-		temp   float64
-		source string
-		igpu   float64
+// collectLoop runs forever on a single COM-initialized OS thread, refreshing
+// the metrics cache every collectInterval. COM is per-thread on Windows;
+// LockOSThread prevents goroutine migration from breaking OLE calls.
+func collectLoop(ctx context.Context) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
+		log.Printf("[metrics] CoInitializeEx failed: %v", err)
+		return
 	}
+	defer ole.CoUninitialize()
 
-	ch := make(chan result, 1)
-	go func() {
-		// CRITICAL: Pin this goroutine to a single OS thread.
-		// COM is per-thread on Windows; without this, goroutine migration
-		// between threads breaks all WMI/OLE calls.
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
+	ticker := time.NewTicker(collectInterval)
+	defer ticker.Stop()
 
-		ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED)
-		defer ole.CoUninitialize()
-
+	for {
 		temp, source := queryCPUTemp()
 		igpu := queryIGPU()
-		ch <- result{temp, source, igpu}
-	}()
 
-	select {
-	case r := <-ch:
-		resp := MetricsResponse{
-			CPUTempC:   r.temp,
-			IGPUPct:    r.igpu,
+		cacheMu.Lock()
+		cachedResult = MetricsResponse{
+			CPUTempC:   temp,
+			IGPUPct:    igpu,
 			Timestamp:  time.Now().Format(time.RFC3339),
-			TempSource: r.source,
+			TempSource: source,
 		}
-		cacheMu.Lock()
-		cachedResult = resp
 		cacheMu.Unlock()
-		return resp
-	case <-time.After(3 * time.Second):
-		log.Println("[metrics] WMI queries timed out (3s), returning cached values")
-		cacheMu.Lock()
-		cached := cachedResult
-		cacheMu.Unlock()
-		cached.Timestamp = time.Now().Format(time.RFC3339)
-		return cached
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// setCORS allows extension origins only. Requests without an Origin header
+// (curl, same-machine tools) work fine without CORS headers.
+func setCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if strings.HasPrefix(origin, "chrome-extension://") ||
+		strings.HasPrefix(origin, "moz-extension://") {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	}
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	// CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(200)
+	setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	metrics := collectMetrics()
+	w.Header().Set("Content-Type", "application/json")
+	cacheMu.RLock()
+	metrics := cachedResult
+	cacheMu.RUnlock()
 	json.NewEncoder(w).Encode(metrics)
 }
 
 func main() {
-	http.HandleFunc("/metrics", metricsHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Graceful shutdown
+	go collectLoop(ctx)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", metricsHandler)
+
+	server := &http.Server{
+		Addr:         listenAddr,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Println("TabVolt companion running on :9001")
-		if err := http.ListenAndServe(":9001", nil); err != nil {
+		log.Printf("TabVolt companion running on %s", listenAddr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
 	<-stop
 	fmt.Println("\nShutting down TabVolt companion.")
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
 }

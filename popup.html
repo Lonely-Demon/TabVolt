@@ -9,222 +9,239 @@
 
 <body>
 
-  <!-- HEADER -->
-  <div id="header">
-    <div class="header-top">
-      <span id="logo">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" class="icon-bolt" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-        </svg>
-        TabVolt
-      </span>
-      <span id="subtitle">Energy Optimizer</span>
+  <!-- ======================= HEADER ======================= -->
+  <header id="header">
+    <div id="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" class="icon-bolt" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+      </svg>
+      <span class="brand-name">TabVolt</span>
     </div>
-    <div id="system-metrics">
-      <span class="sys-metric" id="metric-cpu">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+    <div id="sys-chips">
+      <span class="chip" id="chip-cpu" title="System CPU usage">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
           <rect x="9" y="9" width="6" height="6" />
           <line x1="9" y1="1" x2="9" y2="4" />
           <line x1="15" y1="1" x2="15" y2="4" />
           <line x1="9" y1="20" x2="9" y2="23" />
           <line x1="15" y1="20" x2="15" y2="23" />
           <line x1="20" y1="9" x2="23" y2="9" />
-          <line x1="20" y1="14" x2="23" y2="14" />
           <line x1="1" y1="9" x2="4" y2="9" />
-          <line x1="1" y1="14" x2="4" y2="14" />
         </svg>
-        CPU —%
+        <span class="chip-val" id="chip-cpu-val">—%</span>
       </span>
-      <span class="sys-metric" id="metric-ram">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="6" width="20" height="12" rx="2" ry="2" />
-          <line x1="6" y1="6" x2="6" y2="18" />
-          <line x1="10" y1="6" x2="10" y2="18" />
-          <line x1="14" y1="6" x2="14" y2="18" />
-          <line x1="18" y1="6" x2="18" y2="18" />
+      <span class="chip" id="chip-ram" title="System memory usage">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          aria-hidden="true">
+          <rect x="2" y="6" width="20" height="12" rx="2" />
+          <line x1="7" y1="6" x2="7" y2="18" />
+          <line x1="12" y1="6" x2="12" y2="18" />
+          <line x1="17" y1="6" x2="17" y2="18" />
         </svg>
-        RAM —%
+        <span class="chip-val" id="chip-ram-val">—%</span>
       </span>
-      <span class="sys-metric" id="metric-battery">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          style="color:var(--color-ok)">
-          <rect x="1" y="6" width="18" height="12" rx="2" ry="2" />
-          <line x1="23" y1="13" x2="23" y2="11" />
+      <span class="chip" id="chip-batt" title="Battery">
+        <span id="chip-batt-icon" aria-hidden="true"></span>
+        <span class="chip-val" id="chip-batt-val">—</span>
+      </span>
+      <span class="chip chip-accent" id="chip-comp" title="Companion hardware metrics" hidden>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+          aria-hidden="true">
+          <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z" />
         </svg>
-        —%
+        <span class="chip-val" id="chip-comp-val">—</span>
       </span>
+      <button class="icon-btn" id="btn-settings" aria-label="Settings" aria-expanded="false" title="Settings">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      </button>
     </div>
+  </header>
+
+  <!-- ======================= BUDGET STRIP ======================= -->
+  <div id="budget-strip" hidden>
+    <div id="budget-bar-track">
+      <div id="budget-bar"></div>
+    </div>
+    <span id="budget-label"></span>
   </div>
 
-  <!-- PHASE 2 — COMPANION PANEL (hidden until companion online) -->
-  <div id="companion-panel" style="display:none">
-    <span id="comp-temp">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z" />
+  <!-- ======================= SETTINGS DRAWER ======================= -->
+  <section id="settings-drawer" hidden aria-label="Settings">
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Automation</div>
+      <div class="drawer-row">
+        <label class="drawer-label" for="auto-suspend-select">Auto-suspend idle tabs after</label>
+        <select id="auto-suspend-select" class="select">
+          <option value="0">Off</option>
+          <option value="5" selected>5 min</option>
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Energy budget</div>
+      <div class="drawer-row">
+        <label class="drawer-label" for="budget-target-pct">Keep battery above</label>
+        <input type="number" id="budget-target-pct" class="input input-num" placeholder="%" min="10" max="90">
+        <label class="drawer-label" for="budget-target-time">until</label>
+        <input type="time" id="budget-target-time" class="input">
+      </div>
+      <div class="drawer-row">
+        <button id="btn-set-budget" class="btn btn-small">Set budget</button>
+        <button id="btn-clear-budget" class="btn btn-small" hidden>Clear budget</button>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">AI suggestions <span id="ai-key-status" class="status-text"></span></div>
+      <div class="drawer-row">
+        <input type="password" id="groq-key-input" class="input input-mono" placeholder="Groq API key (gsk_…)"
+          aria-label="Groq API key">
+        <button id="btn-save-key" class="btn btn-small">Save</button>
+      </div>
+      <div class="drawer-hint">Free key at <a href="https://console.groq.com/keys" target="_blank"
+          rel="noreferrer">console.groq.com/keys</a>. Stored locally, only sent to Groq.</div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Hardware companion <span id="companion-badge" class="badge-offline">OFFLINE</span>
+      </div>
+      <div class="drawer-row">
+        <label class="drawer-label" for="enhanced-toggle">Enhanced mode (CPU temp, iGPU)</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="enhanced-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div id="companion-panel" hidden class="drawer-row companion-metrics">
+        <span id="comp-temp">Temp: —</span>
+        <span id="comp-igpu">iGPU: —</span>
+        <span id="comp-source" class="status-text"></span>
+      </div>
+      <div id="companion-setup" hidden class="companion-setup">
+        <div class="companion-setup-title">⚡ Companion not running</div>
+        <div>To enable hardware monitoring, run:</div>
+        <code>companion\start_companion.bat</code>
+        <div class="drawer-hint">Run as Administrator for CPU temperature. Windows only.</div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ======================= TOOLBAR ======================= -->
+  <div id="toolbar">
+    <div id="search-wrap">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
-      Temp: --°C
-    </span>
-    <span id="comp-igpu">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-        <line x1="8" y1="21" x2="16" y2="21" />
-        <line x1="12" y1="17" x2="12" y2="21" />
-      </svg>
-      iGPU: --%
-    </span>
-    <span id="comp-source" class="comp-src"></span>
-  </div>
-
-  <!-- ENHANCED MODE ROW -->
-  <div id="enhanced-row">
-    <span class="enhanced-label">Enhanced Mode</span>
-    <label class="toggle-switch">
-      <input type="checkbox" id="enhanced-toggle">
-      <span class="slider"></span>
-    </label>
-    <span id="companion-badge" class="badge-offline">OFFLINE</span>
-  </div>
-
-  <!-- COMPANION SETUP INSTRUCTIONS (shown when toggle clicked while offline) -->
-  <div id="companion-setup"
-    style="display:none; padding:8px 14px; background:rgba(232,106,26,0.08); border:1px solid rgba(232,106,26,0.2); border-radius:6px; margin:6px 12px; font-size:11px; color:#F0F0F0; line-height:1.6;">
-    <div style="font-weight:700; margin-bottom:4px; color:#E86A1A;">⚡ Companion Not Running</div>
-    <div style="color:#AAA;">To enable hardware monitoring (CPU temp, iGPU), run:</div>
-    <div
-      style="background:#0F0F0F; border-radius:4px; padding:6px 10px; margin:6px 0; font-family:monospace; font-size:10px; color:#27AE60; word-break:break-all;">
-      companion\start_companion.bat</div>
-    <div style="color:#666; font-size:10px;">Run as Administrator for CPU temperature.</div>
-  </div>
-
-  <!-- AI API KEY SETTINGS -->
-  <div id="ai-settings" style="padding:0 12px;">
-    <div id="ai-settings-header"
-      style="font-size:10px; font-weight:700; color:var(--text-muted,#999); text-transform:uppercase; letter-spacing:0.5px; cursor:pointer; display:flex; align-items:center; gap:4px; padding:4px 0;">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round">
+      <input id="search-input" type="search" placeholder="Filter tabs" aria-label="Filter tabs" autocomplete="off">
+    </div>
+    <button id="btn-suspend-top" class="btn btn-primary" title="Suspend the 3 highest-scoring idle background tabs">
+      Suspend idle
+    </button>
+    <button id="btn-ai-suggest" class="icon-btn icon-btn-accent" aria-label="Get AI suggestion"
+      title="Get AI suggestion">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path
           d="M12 3l1.912 5.813a2 2 0 001.275 1.275L21 12l-5.813 1.912a2 2 0 00-1.275 1.275L12 21l-1.912-5.813a2 2 0 00-1.275-1.275L3 12l5.813-1.912a2 2 0 001.275-1.275L12 3z" />
       </svg>
-      AI Settings
-      <span id="ai-key-status" style="margin-left:auto; font-size:9px; font-weight:400;"></span>
-    </div>
-    <div id="ai-settings-body" style="display:none; padding:4px 0 8px;">
-      <div style="display:flex; gap:4px; align-items:center;">
-        <input type="password" id="groq-key-input" placeholder="Groq API key (gsk_...)"
-          style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:5px 8px; color:#F0F0F0; font-size:10px; font-family:monospace; outline:none;">
-        <button id="btn-save-key" class="btn btn-small" style="white-space:nowrap;">Save</button>
-      </div>
-      <div style="font-size:9px; color:#666; margin-top:4px;">Get a free key at <a href="https://console.groq.com/keys"
-          style="color:var(--color-accent,#E86A1A);">console.groq.com/keys</a></div>
-    </div>
+    </button>
+    <button id="btn-history" class="icon-btn" aria-label="History and analytics" title="History &amp; analytics">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" aria-hidden="true">
+        <path d="M3 3v5h5" />
+        <path d="M3.05 13A9 9 0 106 5.3L3 8" />
+        <path d="M12 7v5l4 2" />
+      </svg>
+    </button>
   </div>
-  <!-- TAB LIST -->
-  <div id="tab-list-container">
-    <div id="tab-list">
-      <p class="empty-state">Waiting for data…</p>
+
+  <!-- ======================= AI PANEL ======================= -->
+  <div id="ai-panel" hidden>
+    <p id="ai-text"></p>
+    <div class="ai-actions">
+      <button id="btn-act-now" class="btn btn-small btn-primary" hidden></button>
+      <button id="btn-ai-dismiss" class="btn btn-small">Dismiss</button>
     </div>
   </div>
 
-  <!-- SHARED TOOLTIP PORTAL — single element, fixed position, populated by JS -->
-  <!-- The term is "portal tooltip": detached from DOM source, always same position -->
-  <div id="tab-tooltip-panel" class="tooltip-panel" style="display:none">
+  <!-- ======================= TAB TABLE ======================= -->
+  <div id="list-header">
+    <button class="col col-name sortable" data-sort="title">Name<span class="sort-arrow"></span></button>
+    <button class="col col-num sortable" data-sort="cpu_pct" title="Estimated share of system CPU">CPU<span
+        class="sort-arrow"></span></button>
+    <button class="col col-num sortable" data-sort="kb_transferred" title="Network transferred last cycle">Net<span
+        class="sort-arrow"></span></button>
+    <button class="col col-score sortable" data-sort="energyscore" title="Energy score">Score<span
+        class="sort-arrow"></span></button>
+    <span class="col col-actions" aria-hidden="true"></span>
+  </div>
+
+  <div id="tab-list-container">
+    <div id="tab-list" aria-label="Open tabs">
+      <div class="skeleton-row"><span class="sk sk-icon"></span><span class="sk sk-title"></span><span
+          class="sk sk-num"></span><span class="sk sk-num"></span><span class="sk sk-score"></span></div>
+      <div class="skeleton-row"><span class="sk sk-icon"></span><span class="sk sk-title"></span><span
+          class="sk sk-num"></span><span class="sk sk-num"></span><span class="sk sk-score"></span></div>
+      <div class="skeleton-row"><span class="sk sk-icon"></span><span class="sk sk-title"></span><span
+          class="sk sk-num"></span><span class="sk sk-num"></span><span class="sk sk-score"></span></div>
+      <div class="skeleton-row"><span class="sk sk-icon"></span><span class="sk sk-title"></span><span
+          class="sk sk-num"></span><span class="sk sk-num"></span><span class="sk sk-score"></span></div>
+    </div>
+    <p id="list-empty" class="empty-state" hidden></p>
+  </div>
+
+  <!-- ======================= TOOLTIP (portal) ======================= -->
+  <div id="tab-tooltip-panel" class="tooltip-panel" hidden>
     <div class="tooltip-title" id="tt-title"></div>
     <div class="tooltip-grid">
       <span class="tt-label">Est. CPU</span><span class="tt-val" id="tt-cpu">—</span>
-      <span class="tt-label">Est. RAM</span><span class="tt-val" id="tt-ram">—</span>
+      <span class="tt-label">Load share</span><span class="tt-val" id="tt-share">—</span>
       <span class="tt-label">Network</span><span class="tt-val" id="tt-net">—</span>
       <span class="tt-label">Idle</span><span class="tt-val" id="tt-idle">—</span>
     </div>
-    <div class="tooltip-scope">Stats are relative to browser</div>
+    <div class="tooltip-scope">Estimates relative to browser load</div>
   </div>
 
-  <!-- PHASE 2 — HEATMAP SECTION -->
-  <div id="heatmap-section">
+  <!-- ======================= HEATMAP ======================= -->
+  <section id="heatmap-section">
     <div id="heatmap-header">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round">
+        stroke-linecap="round" aria-hidden="true">
         <rect x="3" y="3" width="7" height="7" />
         <rect x="14" y="3" width="7" height="7" />
         <rect x="14" y="14" width="7" height="7" />
         <rect x="3" y="14" width="7" height="7" />
       </svg>
-      Energy Timeline — Last 30 cycles
+      Energy timeline — last 30 cycles
       <span id="heatmap-tab-count"></span>
     </div>
-    <canvas id="heatmap-canvas" width="380" height="160"></canvas>
-  </div>
+    <canvas id="heatmap-canvas" width="380" height="160" aria-label="Per-tab energy score heatmap"></canvas>
+  </section>
 
-
-  <!-- ACTION BAR -->
-  <div id="action-bar">
-    <button id="btn-suspend-top" class="btn btn-primary">Suspend Idle Tabs</button>
-    <button id="btn-ai-suggest" class="btn btn-accent">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round">
-        <path
-          d="M12 3l1.912 5.813a2 2 0 001.275 1.275L21 12l-5.813 1.912a2 2 0 00-1.275 1.275L12 21l-1.912-5.813a2 2 0 00-1.275-1.275L3 12l5.813-1.912a2 2 0 001.275-1.275L12 3z" />
-      </svg>
-      Get AI Suggestion
-    </button>
-  </div>
-
-  <!-- AI PANEL -->
-  <div id="ai-panel" style="display:none">
-    <p id="ai-text">Loading…</p>
-    <button id="btn-act-now" class="btn btn-small">Act Now</button>
-  </div>
-
-  <!-- PHASE 3 — ENERGY BUDGET -->
-  <div id="budget-section" style="padding:6px 12px;">
-    <div id="budget-header"
-      style="font-size:10px; font-weight:700; color:var(--text-muted,#999); text-transform:uppercase; letter-spacing:0.5px; cursor:pointer; display:flex; align-items:center; gap:4px; padding:4px 0;">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round">
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-      </svg>
-      Energy Budget
-      <span id="budget-toggle-arrow" style="font-size:8px; margin-left:auto;">&#9660;</span>
-    </div>
-    <div id="budget-controls" style="display:none; padding:6px 0;">
-      <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
-        <label style="font-size:10px; color:var(--text-muted,#999); white-space:nowrap;">Keep above</label>
-        <input type="number" id="budget-target-pct" placeholder="%" min="10" max="90"
-          style="width:50px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:4px 6px; color:#F0F0F0; font-size:11px; font-family:inherit; outline:none; text-align:center;">
-        <label style="font-size:10px; color:var(--text-muted,#999); white-space:nowrap;">until</label>
-        <input type="time" id="budget-target-time"
-          style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:4px 6px; color:#F0F0F0; font-size:11px; font-family:inherit; outline:none;">
-      </div>
-      <div style="display:flex; gap:6px;">
-        <button id="btn-set-budget" class="btn btn-small" style="flex:1;">Set Budget</button>
-        <button id="btn-clear-budget" class="btn btn-small" style="flex:1; display:none;">Clear Budget</button>
-      </div>
-    </div>
-    <div id="budget-status" style="display:none; padding:4px 0;">
-      <div id="budget-bar-container"
-        style="width:100%; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; margin-bottom:4px;">
-        <div id="budget-bar"
-          style="height:100%; border-radius:3px; transition:width 0.5s ease, background 0.3s ease; width:0%;"></div>
-      </div>
-      <span id="budget-label" style="font-size:10px; color:var(--text-muted,#999);"></span>
-    </div>
-  </div>
-
-  <!-- FOOTER -->
-  <div id="footer">
-    <span id="footer-mwh">Session: — mWh</span>
+  <!-- ======================= FOOTER ======================= -->
+  <footer id="footer">
+    <span id="footer-mwh">— mWh</span>
+    <span class="footer-dot">·</span>
     <span id="footer-co2">— g CO₂</span>
-    <button id="btn-history" class="footer-btn" title="View session history">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round">
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg>
-      History
-    </button>
-    <span id="footer-ram">TabVolt: —</span>
-  </div>
+    <span id="footer-updated"></span>
+  </footer>
+
+  <div id="toast" role="status" hidden></div>
 
   <script type="module" src="popup.js"></script>
 </body>

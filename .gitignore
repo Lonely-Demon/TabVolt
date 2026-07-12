@@ -1,0 +1,11 @@
+# Build artifacts — never commit binaries; build with `go build` (see README)
+companion/tabvolt-companion.exe
+companion/tabvolt-companion
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Dependency dirs
+node_modules/

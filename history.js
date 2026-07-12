@@ -1,8 +1,7 @@
-// history.js — PHASE 2 Session History Page
-// Pure IndexedDB reads. No chrome extension APIs needed.
+// history.js — Session History Page (ES module)
+// Pure IndexedDB reads through the shared storage.js layer.
 
-const DB_NAME = 'TabVoltDB';
-const DB_VERSION = 2;
+import { initDB, getAllRecords, getSessionCycles } from './storage.js';
 
 let db = null;
 let allSessions = [];
@@ -11,55 +10,6 @@ let sortCol = 'energyscore';
 let sortAsc = false;
 let activeFilter = 'all';      // 'all' | 'today' | '7d' | '30d' | 'date'
 let filterDate = null;          // Date string for specific date filter
-
-// ============================================================================
-// DB
-// ============================================================================
-
-function openDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
-            const d = e.target.result;
-            if (!d.objectStoreNames.contains('tab_cycles')) {
-                const s = d.createObjectStore('tab_cycles', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('session_id', 'session_id', { unique: false });
-                s.createIndex('domain', 'domain', { unique: false });
-                s.createIndex('timestamp', 'timestamp', { unique: false });
-            }
-            if (!d.objectStoreNames.contains('session_meta'))
-                d.createObjectStore('session_meta', { keyPath: 'session_id' });
-            if (!d.objectStoreNames.contains('domain_patterns'))
-                d.createObjectStore('domain_patterns', { keyPath: 'domain' });
-            if (!d.objectStoreNames.contains('suspend_events')) {
-                const se = d.createObjectStore('suspend_events', { keyPath: 'id', autoIncrement: true });
-                se.createIndex('session_id', 'session_id', { unique: false });
-                se.createIndex('timestamp', 'timestamp', { unique: false });
-            }
-        };
-        req.onsuccess = (e) => resolve(e.target.result);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-function getAllSessions(db) {
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction('session_meta', 'readonly');
-        const req = tx.objectStore('session_meta').getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-function getSessionCycles(db, sessionId) {
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction('tab_cycles', 'readonly');
-        const idx = tx.objectStore('tab_cycles').index('session_id');
-        const req = idx.getAll(sessionId);
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
 
 // ============================================================================
 // RENDER SIDEBAR
@@ -337,8 +287,8 @@ function formatKB(kb) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        db = await openDB();
-        allSessions = await getAllSessions(db);
+        db = await initDB();
+        allSessions = await getAllRecords(db, 'session_meta');
         renderSessionList();
 
         // Auto-select most recent session

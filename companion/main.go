@@ -36,19 +36,25 @@ const (
 
 // MetricsResponse is the JSON contract with the extension.
 type MetricsResponse struct {
-	CPUTempC   float64 `json:"cpu_temp_c"`
-	IGPUPct    float64 `json:"igpu_pct"`
-	Timestamp  string  `json:"timestamp"`
-	TempSource string  `json:"temp_source"`
+	CPUTempC      float64 `json:"cpu_temp_c"`
+	IGPUPct       float64 `json:"igpu_pct"`
+	Timestamp     string  `json:"timestamp"`
+	TempSource    string  `json:"temp_source"`
+	BrowserCPUPct float64 `json:"browser_cpu_pct"` // -1 if unavailable
+	BrowserMemMB  float64 `json:"browser_mem_mb"`  // -1 if unavailable
+	BrowserSource string  `json:"browser_source"`  // "wmi_process" | "unavailable"
 }
 
 var (
 	cacheMu      sync.RWMutex
 	cachedResult = MetricsResponse{
-		CPUTempC:   -1.0,
-		IGPUPct:    -1.0,
-		Timestamp:  time.Now().Format(time.RFC3339),
-		TempSource: "unavailable",
+		CPUTempC:      -1.0,
+		IGPUPct:       -1.0,
+		Timestamp:     time.Now().Format(time.RFC3339),
+		TempSource:    "unavailable",
+		BrowserCPUPct: -1.0,
+		BrowserMemMB:  -1.0,
+		BrowserSource: "unavailable",
 	}
 )
 
@@ -169,6 +175,101 @@ func queryIGPU() float64 {
 	return totalUtil
 }
 
+// browserProcessNamePrefix matches every instance WMI reports for the
+// browser's own process tree (renderer, GPU, network, utility processes
+// all run as separate "chrome.exe" instances, which WMI's per-process
+// counters de-duplicate as "chrome", "chrome#1", "chrome#2", ...).
+const browserProcessNamePrefix = "chrome"
+
+// processRow is one row of Win32_PerfFormattedData_PerfProc_Process.
+type processRow struct {
+	name       string
+	cpuPct     float64 // PercentProcessorTime — already normalized to "% of total system CPU"
+	workingSet float64 // WorkingSetPrivate, in bytes — matches Task Manager's own "Memory" column
+}
+
+// aggregateBrowserProcesses sums CPU% and private working-set memory across
+// every row belonging to the browser, giving its real total system-wide
+// footprint instead of an assumed percentage. Pure and WMI-free so it's
+// unit-testable without Windows (see main_test.go).
+func aggregateBrowserProcesses(rows []processRow) (cpuPct float64, memBytes float64, matched int) {
+	for _, r := range rows {
+		if !strings.HasPrefix(strings.ToLower(r.name), browserProcessNamePrefix) {
+			continue
+		}
+		cpuPct += r.cpuPct
+		memBytes += r.workingSet
+		matched++
+	}
+	return cpuPct, memBytes, matched
+}
+
+// queryBrowserTotals sums CPU% and private working-set memory across every
+// chrome.exe process WMI can see system-wide (main browser process, every
+// renderer/site-isolation instance, the GPU process, network process,
+// etc.) — the real total the browser is using, not a guessed fraction of
+// the system total. Must be called from a thread with COM initialized.
+func queryBrowserTotals() (cpuPct float64, memMB float64, ok bool) {
+	svc, err := connectWMI(`root\cimv2`)
+	if err != nil {
+		log.Printf("[browser] WMI connect failed: %v", err)
+		return -1, -1, false
+	}
+	defer svc.Release()
+
+	result, err := oleutil.CallMethod(svc, "ExecQuery",
+		`SELECT Name, PercentProcessorTime, WorkingSetPrivate FROM Win32_PerfFormattedData_PerfProc_Process WHERE Name LIKE "chrome%"`)
+	if err != nil {
+		log.Printf("[browser] ExecQuery failed: %v", err)
+		return -1, -1, false
+	}
+	resultDisp := result.ToIDispatch()
+	defer resultDisp.Release()
+
+	countVar, err := oleutil.GetProperty(resultDisp, "Count")
+	if err != nil {
+		log.Printf("[browser] Count failed: %v", err)
+		return -1, -1, false
+	}
+	count := int(countVar.Val)
+	if count == 0 {
+		log.Println("[browser] No chrome.exe processes found")
+		return -1, -1, false
+	}
+
+	rows := make([]processRow, 0, count)
+	for i := 0; i < count; i++ {
+		item, err := oleutil.CallMethod(resultDisp, "ItemIndex", i)
+		if err != nil {
+			continue
+		}
+		itemDisp := item.ToIDispatch()
+
+		nameVal, _ := oleutil.GetProperty(itemDisp, "Name")
+		cpuVal, _ := oleutil.GetProperty(itemDisp, "PercentProcessorTime")
+		memVal, _ := oleutil.GetProperty(itemDisp, "WorkingSetPrivate")
+
+		name := ""
+		if nameVal != nil {
+			if s, ok := nameVal.Value().(string); ok {
+				name = s
+			}
+		}
+		rows = append(rows, processRow{
+			name:       name,
+			cpuPct:     toFloat64(cpuVal),
+			workingSet: toFloat64(memVal),
+		})
+		itemDisp.Release()
+	}
+
+	totalCPU, totalMemBytes, matched := aggregateBrowserProcesses(rows)
+	if matched == 0 {
+		return -1, -1, false
+	}
+	return totalCPU, totalMemBytes / 1048576, true
+}
+
 // toFloat64 extracts a numeric value from a VARIANT, handling all common WMI numeric types.
 func toFloat64(v *ole.VARIANT) float64 {
 	if v == nil {
@@ -234,13 +335,23 @@ func collectLoop(ctx context.Context) {
 	for {
 		temp, source := queryCPUTemp()
 		igpu := queryIGPU()
+		browserCPU, browserMemMB, browserOK := queryBrowserTotals()
+		browserSource := "unavailable"
+		if browserOK {
+			browserSource = "wmi_process"
+		} else {
+			browserCPU, browserMemMB = -1.0, -1.0
+		}
 
 		cacheMu.Lock()
 		cachedResult = MetricsResponse{
-			CPUTempC:   temp,
-			IGPUPct:    igpu,
-			Timestamp:  time.Now().Format(time.RFC3339),
-			TempSource: source,
+			CPUTempC:      temp,
+			IGPUPct:       igpu,
+			Timestamp:     time.Now().Format(time.RFC3339),
+			TempSource:    source,
+			BrowserCPUPct: browserCPU,
+			BrowserMemMB:  browserMemMB,
+			BrowserSource: browserSource,
 		}
 		cacheMu.Unlock()
 

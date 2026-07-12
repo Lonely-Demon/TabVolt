@@ -19,7 +19,7 @@
 - **Pattern learning** — event-driven open/return counters per domain flag tabs you habitually abandon ("rarely revisited — safe to suspend").
 - **AI suggestions (optional)** — Groq-hosted Llama explains which tab to suspend and why. The model only ever sees pre-filtered suspendable candidates and returns a numbered pick, so it cannot name a tab that isn't safe to act on — and "Act Now" suspends exactly the tab it named.
 - **Analytics dashboard** — Grafana-style charts (power & CO₂ timelines, CPU by domain, worst offenders, savings) plus a tree-equivalency view, with time-range filtering backed by IndexedDB range queries.
-- **Hardware companion (Windows, optional)** — a small Go server reads real CPU temperature and iGPU utilization from WMI and serves them to the popup on `127.0.0.1:9001`.
+- **Hardware companion (Windows, optional)** — a small Go server reads real CPU temperature and iGPU utilization from WMI and serves them to the popup on `127.0.0.1:9001`. It also sums every `chrome.exe` process system-wide (main process, every renderer, GPU process, etc.) to report the browser's *real* total CPU% and memory — replacing the guessed "browser = 60% of system CPU / 40% of system RAM" constants that the per-tab CPU/RAM columns split across tabs when the companion isn't running.
 
 ## 🚀 Setup
 
@@ -53,7 +53,7 @@ cd companion
 go build -o tabvolt-companion.exe .
 ```
 
-or just run `start_companion.bat`, which builds automatically if [Go](https://go.dev/dl/) is installed. Run it **as Administrator** if you want CPU temperature (the `MSAcpi_ThermalZoneTemperature` sensor requires elevation on most machines). Then enable **Enhanced mode** in the popup's settings drawer.
+or just run `start_companion.bat`, which builds automatically if [Go](https://go.dev/dl/) is installed. Run it **as Administrator** if you want CPU temperature (the `MSAcpi_ThermalZoneTemperature` sensor requires elevation on most machines). Then enable **Enhanced mode** in the popup's settings drawer — the drawer's "Browser" line and the CPU/RAM columns switch from guessed to companion-measured browser totals automatically once it's reachable, and back again if it stops.
 
 ## 🛠️ Tech stack
 
@@ -88,17 +88,36 @@ All monitoring data (tab titles, URLs, per-tab metrics) stays in your browser's 
 Chrome Stable-channel extensions have no API for real per-tab CPU or memory —
 that data (`chrome.processes`) is restricted to the Dev/Canary channels and
 breaks installation on Stable (this project's own [Phase 1 log](Context/Phase1_Iteration_Log.md)
-hit that wall early on). So every per-tab number in the popup is a heuristic
-split of a real system-wide total, not a process reading:
+hit that wall early on). So every per-tab CPU/RAM number goes through two
+stages, and it's worth knowing where the real measurement stops and the
+estimate begins:
 
-- **System-wide CPU%** and **system-wide memory%** (`chrome.system.cpu` /
-  `chrome.system.memory`) are real, measured values.
-- Each tab's **share** of those totals is estimated from its activity —
-  active/audible/loading state and network bytes transferred — using two
-  *different* weighting formulas for CPU vs. RAM (`energyscore.js`), so the
-  two columns don't just move in lockstep and tell you nothing new.
-- The `~` prefix on the CPU and RAM columns is a permanent reminder of this,
-  not just a hover tooltip.
+**Stage 1 — how much of the system does the *browser* itself use?**
+`chrome.system.cpu` / `chrome.system.memory` give a real, measured
+system-wide total. But there's no Stable-channel API for "how much of that
+is Chrome" — so without the hardware companion, TabVolt falls back to a
+flat assumption (browser ≈ 60% of system CPU, ≈ 40% of system RAM,
+regardless of what's actually running). **With the companion running**,
+this stage is a real measurement instead: it sums every `chrome.exe`
+process system-wide via WMI (main process, every renderer, the GPU
+process, etc.) — the same number Task Manager's "Memory" column would show
+you if you added up every Chrome entry yourself.
+
+**Stage 2 — how much of the browser's total does *this tab* use?** This
+part is always an estimate, companion or not, because per-tab attribution
+requires the same Dev/Canary-only API. Each tab's share is inferred from
+its activity — active/audible/loading state and network bytes transferred
+— using two *different* weighting formulas for CPU vs. RAM (`energyscore.js`
+→ `computeCpuWeight`/`computeMemoryWeight`), so the two columns don't just
+move in lockstep and tell you nothing new. The formulas deliberately give
+"merely focused" only a small edge over a background tab — an earlier
+version gave it a large one, which let whichever tab you were looking at
+claim 80–90%+ of the total while sitting completely idle.
+
+The `~` prefix on the CPU and RAM columns is a permanent reminder that
+stage 2 is always a split, never a per-tab measurement — real stage-1 data
+narrows the gap, it doesn't close it. The drawer's "Browser" line under
+Enhanced Mode tells you which stage 1 you're currently getting.
 
 This also means TabVolt's numbers won't track Task Manager's tick-by-tick —
 partly because per-tab attribution is inherently approximate, and partly

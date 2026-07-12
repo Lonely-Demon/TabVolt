@@ -809,6 +809,17 @@ async function checkCompanion() {
         const igpu = metrics.igpu_pct === -1 ? 'N/A' : `${metrics.igpu_pct.toFixed(1)}%`;
         setText('comp-temp', `Temp: ${temp}`);
         setText('comp-igpu', `iGPU: ${igpu}`);
+
+        const compBrowser = $('comp-browser');
+        if (compBrowser) {
+            if (metrics.browser_source === 'wmi_process' && metrics.browser_cpu_pct >= 0) {
+                setText('comp-browser', `Browser: ${metrics.browser_cpu_pct.toFixed(1)}% CPU · ${Math.round(metrics.browser_mem_mb)} MB`);
+                compBrowser.title = 'Every chrome.exe process on your machine, summed via WMI — a real measurement, feeding the CPU/RAM columns below instead of a guess.';
+            } else {
+                setText('comp-browser', 'Browser: N/A');
+            }
+        }
+
         setText('comp-source', metrics.temp_source === 'acpi_thermal_zone' ? '(ACPI)' : '');
 
         if (metrics.cpu_temp_c !== -1) {

@@ -112,7 +112,8 @@
           class="badge-offline">OFFLINE</span>
       </div>
       <div class="drawer-row">
-        <label class="drawer-label" for="enhanced-toggle">Enhanced mode (CPU temp, iGPU)</label>
+        <label class="drawer-label" for="enhanced-toggle">Enhanced mode (CPU temp, iGPU, real browser
+          totals)</label>
         <label class="toggle-switch">
           <input type="checkbox" id="enhanced-toggle">
           <span class="slider"></span>
@@ -121,6 +122,7 @@
       <div id="companion-panel" hidden class="drawer-row companion-metrics">
         <span id="comp-temp">Temp: —</span>
         <span id="comp-igpu">iGPU: —</span>
+        <span id="comp-browser" title="Every chrome.exe process on your machine, summed via WMI — a real measurement, not a guess">Browser: —</span>
         <span id="comp-source" class="status-text"></span>
       </div>
       <div id="companion-setup" hidden class="companion-setup">
@@ -178,12 +180,12 @@
     <div id="list-header">
       <button class="col col-name sortable" data-sort="title">Name<span class="sort-arrow"></span></button>
       <button class="col col-num sortable" data-sort="cpu_pct"
-        title="Estimated share of system CPU — not a real per-tab measurement. Chrome doesn't expose that to extensions; this is a relative estimate.">CPU<span
+        title="Estimated share of system CPU — not a real per-tab measurement (Chrome doesn't expose that to extensions). Split from the browser's real total when the hardware companion is running, or a rough guess otherwise.">CPU<span
           class="sort-arrow"></span></button>
       <button class="col col-num sortable" data-sort="kb_transferred" title="Network transferred last cycle">Net<span
           class="sort-arrow"></span></button>
       <button class="col col-num sortable" data-sort="ram_pct"
-        title="Estimated share of system memory — not a real per-tab measurement. Chrome doesn't expose that to extensions; this is a relative estimate.">RAM<span
+        title="Estimated share of system memory — not a real per-tab measurement (Chrome doesn't expose that to extensions). Split from the browser's real total when the hardware companion is running, or a rough guess otherwise.">RAM<span
           class="sort-arrow"></span></button>
       <span class="col col-actions" aria-hidden="true"></span>
     </div>

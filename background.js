@@ -57,6 +57,14 @@ const batteryHistory = [];
 let notifiedBatteryCritical = false;
 let lastBudgetNotificationTime = 0;
 
+// Companion — last successful /metrics read, or null if unreachable/offline.
+// When present with browser_source==='wmi_process', browser_cpu_pct and
+// browser_mem_mb are a REAL measurement (every chrome.exe process summed via
+// WMI), replacing the guessed BROWSER_MEM_SHARE_ASSUMPTION/0.6 constants.
+let companionMetrics = null;
+const COMPANION_URL = 'http://127.0.0.1:9001/metrics';
+const COMPANION_FETCH_TIMEOUT_MS = 1200;
+
 let settings = { ...DEFAULT_SETTINGS };
 let protectedTabs = [];               // [{ tabId, domain, title, protected_since }]
 
@@ -297,6 +305,21 @@ function schedulePoll(delayMs) {
     pollTimer = setTimeout(runPollCycle, delayMs);
 }
 
+/**
+ * Refresh companionMetrics from the local companion, if it's running.
+ * Short timeout so an offline/unreachable companion — the common case,
+ * since it's optional and Windows-only — never meaningfully stalls a poll
+ * cycle. Never throws; sets companionMetrics to null on any failure.
+ */
+async function fetchCompanionMetrics() {
+    try {
+        const res = await fetch(COMPANION_URL, { signal: AbortSignal.timeout(COMPANION_FETCH_TIMEOUT_MS) });
+        companionMetrics = res.ok ? await res.json() : null;
+    } catch (_) {
+        companionMetrics = null;
+    }
+}
+
 async function runPollCycle() {
     if (polling) return;
     polling = true;
@@ -311,10 +334,15 @@ async function runPollCycle() {
         lastCycleTime = now;
         session.cycleCount++;
 
+        // fetchCompanionMetrics() updates the module-level companionMetrics
+        // as a side effect rather than returning a value — run in parallel
+        // with everything else so an offline companion's timeout doesn't
+        // serialize behind the other reads.
         const [tabs, cpuInfo, memInfo] = await Promise.all([
             chrome.tabs.query({}),
             chrome.system.cpu.getInfo(),
-            chrome.system.memory.getInfo()
+            chrome.system.memory.getInfo(),
+            fetchCompanionMetrics()
         ]);
 
         // ---- System CPU delta ----
@@ -333,18 +361,29 @@ async function runPollCycle() {
 
         const memoryPct = memInfo
             ? round1(((memInfo.capacity - memInfo.availableCapacity) / memInfo.capacity) * 100) : 0;
-        const usedRamMB = memInfo
-            ? Math.round((memInfo.capacity - memInfo.availableCapacity) / 1048576) : 0;
 
         const batteryPct = battery ? battery.pct : null;
         const isCharging = battery ? battery.charging : null;
+
+        // ---- Browser-wide CPU/RAM totals: real when the companion is
+        // running (every chrome.exe process summed via WMI), a guessed
+        // fraction of the system total otherwise. Either way, this is the
+        // one number that gets split across tabs below by activity weight —
+        // fixing this half doesn't make the per-tab split itself exact, but
+        // it does replace an arbitrary constant with a real measurement.
+        const hasRealBrowserTotals = companionMetrics?.browser_source === 'wmi_process'
+            && companionMetrics.browser_cpu_pct >= 0 && companionMetrics.browser_mem_mb >= 0;
+        const browserCpuEst = hasRealBrowserTotals
+            ? companionMetrics.browser_cpu_pct
+            : systemCpuPct * 0.6;
+        const browserMemEst = (hasRealBrowserTotals && memInfo)
+            ? (companionMetrics.browser_mem_mb * 1048576 / memInfo.capacity) * 100
+            : memoryPct * BROWSER_MEM_SHARE_ASSUMPTION;
 
         // ---- Heuristic per-tab CPU and memory weights (single pass) ----
         // Two independent weight formulas on purpose — memory uses different
         // signals (media/loading/network, no idle decay) so the RAM column
         // isn't just a rescaled copy of the CPU column.
-        const browserCpuEst = systemCpuPct * 0.6;
-        const browserMemEst = memoryPct * BROWSER_MEM_SHARE_ASSUMPTION;
         const tabWeights = new Map();
         const memWeights = new Map();
         let totalWeight = 0;
@@ -464,7 +503,12 @@ async function runPollCycle() {
                     cpu_pct: systemCpuPct, memory_pct: memoryPct,
                     battery_pct: batteryPct, is_charging: isCharging
                 },
-                browser_totals: { cpu_pct: round1(browserCpuEst), ram_mb: usedRamMB },
+                browser_totals: {
+                    cpu_pct: round1(browserCpuEst),
+                    mem_pct: round1(browserMemEst),
+                    mem_mb: hasRealBrowserTotals ? round1(companionMetrics.browser_mem_mb) : null,
+                    source: hasRealBrowserTotals ? 'measured' : 'estimated'
+                },
                 session: {
                     session_id: session.id, start_time: session.startTime,
                     duration_mins: round1(durationMins),

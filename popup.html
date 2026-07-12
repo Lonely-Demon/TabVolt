@@ -204,15 +204,15 @@
   </section>
 
   <!-- ======================= TOOLTIP (portal) ======================= -->
+  <!-- CPU/RAM are shown in the row itself (with a "~" estimate marker and a
+       full explanation in the column header's title) — the tooltip sticks
+       to genuinely additional, real per-tab data: network and idle time. -->
   <div id="tab-tooltip-panel" class="tooltip-panel" hidden>
     <div class="tooltip-title" id="tt-title"></div>
     <div class="tooltip-grid">
-      <span class="tt-label">Est. CPU</span><span class="tt-val" id="tt-cpu">—</span>
-      <span class="tt-label">Est. RAM</span><span class="tt-val" id="tt-ram">—</span>
       <span class="tt-label">Network</span><span class="tt-val" id="tt-net">—</span>
       <span class="tt-label">Idle</span><span class="tt-val" id="tt-idle">—</span>
     </div>
-    <div class="tooltip-scope">Estimates relative to browser load</div>
   </div>
 
   <!-- ======================= HEATMAP CARD ======================= -->

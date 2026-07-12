@@ -15,7 +15,7 @@
 import {
     computeEnergyScore, getScoreTier, getTierColor,
     estimateMwh, estimateCO2g, getAdaptiveInterval, isRestrictedUrl,
-    computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
+    computeCpuWeight, computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
 } from './energyscore.js';
 
 import {
@@ -354,11 +354,7 @@ async function runPollCycle() {
             const isLoading = tab.status === 'loading';
             const netKB = (networkBytes.get(tab.id) || 0) / 1024;
 
-            let w = 1;
-            if (tab.active) w += 30;
-            if (tab.audible) w += 20;
-            if (isLoading) w += 15;
-            w += Math.min(netKB / 5, 15);
+            const w = computeCpuWeight(tab.active, tab.audible, isLoading, netKB);
             tabWeights.set(tab.id, w);
             totalWeight += w;
 
@@ -411,13 +407,6 @@ async function runPollCycle() {
                 tier, tierColor: getTierColor(tier), state,
                 audible: tab.audible || false,
                 pinned: tab.pinned || false,
-                // Both "share of system X" figures a tab is estimated to
-                // account for — neither is a real per-tab measurement.
-                // Chrome Stable doesn't expose that to extensions at all
-                // (see Context/Phase1_Iteration_Log.md); these are heuristic
-                // splits of a real system-wide total, not process readings.
-                browser_cpu_share: browserCpuEst > 0 ? round1((tabCpuPct / browserCpuEst) * 100) : 0,
-                browser_mem_share: totalMemWeight > 0 ? round1((memWeight / totalMemWeight) * 100) : 0,
                 is_protected: isTabProtected(tab.id, domain),
                 preemptive_flag: pattern?.preemptive_flag || false
             });

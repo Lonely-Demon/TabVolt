@@ -400,8 +400,6 @@ $('tab-list-container').addEventListener('scroll', hideTooltip, { passive: true 
 
 function populateTooltipText(t) {
     $('tt-title').textContent = t.title;
-    $('tt-cpu').textContent = `${t.cpu_pct}% · ${t.browser_cpu_share}% of browser`;
-    $('tt-ram').textContent = `${t.ram_pct ?? 0}% · ${t.browser_mem_share ?? 0}% of browser`;
     $('tt-net').textContent = formatKB(t.kb_transferred);
     $('tt-idle').textContent = formatIdle(t.idle_mins);
 }

@@ -12,7 +12,7 @@ import {
     computeEnergyScore, getScoreTier, getTierColor,
     estimateMwh, estimateCO2g, formatCO2Mass,
     getAdaptiveInterval, GRID_KG_CO2_PER_KWH, isRestrictedUrl,
-    computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
+    computeCpuWeight, computeMemoryWeight, BROWSER_MEM_SHARE_ASSUMPTION
 } from '../energyscore.js';
 
 // ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ test('loading tabs get the in-flight-assets bonus', () => {
 });
 
 test('active tab gets a small bonus, much smaller than audible/loading', () => {
-    assert.equal(computeMemoryWeight(false, false, 0, true), 1 + 5);
+    assert.equal(computeMemoryWeight(false, false, 0, true), 1 + 1);
 });
 
 test('network KB scales the weight up to a cap', () => {
@@ -191,7 +191,49 @@ test('network KB scales the weight up to a cap', () => {
 });
 
 test('all signals combine additively', () => {
-    assert.equal(computeMemoryWeight(true, true, 40, true), 1 + 15 + 10 + 10 + 5);
+    assert.equal(computeMemoryWeight(true, true, 40, true), 1 + 15 + 10 + 10 + 1);
+});
+
+// ---------------------------------------------------------------------------
+// computeCpuWeight
+// ---------------------------------------------------------------------------
+
+test('a silent, non-loading, background tab gets only the baseline CPU weight', () => {
+    assert.equal(computeCpuWeight(false, false, false, 0), 1);
+});
+
+test('audible/loading/network reflect real activity and outweigh mere focus', () => {
+    assert.equal(computeCpuWeight(false, true, false, 0), 1 + 20);  // audible
+    assert.equal(computeCpuWeight(false, false, true, 0), 1 + 15);  // loading
+    assert.equal(computeCpuWeight(false, false, false, 25), 1 + 5); // 25/5=5
+    assert.equal(computeCpuWeight(true, false, false, 0), 1 + 1);  // merely active — literally double baseline
+});
+
+test('network KB scales up to a cap', () => {
+    assert.equal(computeCpuWeight(false, false, false, 1000), 1 + 15); // capped
+});
+
+// Regression for the exact complaint this was built to fix: a completely
+// idle, static, merely-focused tab previously claimed 88.5% of an all-static
+// 4-tab set's total CPU weight (with the old +30 active bonus) while doing
+// nothing — verified empirically in a live Chromium instance. With the +1
+// active bonus, the same 4-tab scenario lands at exactly 40% (double a
+// background tab's weight, not 31x it) — comfortably under half, reproduced
+// here as a permanent unit test so this specific bug can't silently return.
+test('a merely-focused static tab does not dominate a small handful of tabs', () => {
+    const active = computeCpuWeight(true, false, false, 0);
+    const background = computeCpuWeight(false, false, false, 0);
+    const total = active + background * 3;
+    const activeShare = (active / total) * 100;
+    assert.ok(activeShare < 45, `active share ${activeShare}% should not dominate`);
+});
+
+test('the same domination check holds for the memory weight', () => {
+    const active = computeMemoryWeight(false, false, 0, true);
+    const background = computeMemoryWeight(false, false, 0, false);
+    const total = active + background * 3;
+    const activeShare = (active / total) * 100;
+    assert.ok(activeShare < 45, `active share ${activeShare}% should not dominate`);
 });
 
 test('the assumed browser share of system memory is a fraction under one', () => {

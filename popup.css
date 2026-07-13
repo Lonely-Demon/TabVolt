@@ -1023,14 +1023,6 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-.tooltip-scope {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid var(--border);
-  font-size: 9px;
-  color: var(--text-muted);
-}
-
 /* ======================= HEATMAP CARD ======================= */
 
 #heatmap-section {

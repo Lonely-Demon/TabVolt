@@ -1,4 +1,11 @@
-# TabVolt — Full Codebase Review
+# TabVolt — Full Codebase Review (v1, historical)
+
+> **Archived.** This was the first full-codebase review, done at commit
+> `cb5994a`. Almost every finding below — the leaked API keys, the
+> `debugger` permission, the dead battery code, the RAM/CPU math bugs, the
+> triplicated DB schema, missing `LICENSE`/`.gitignore` — was subsequently
+> fixed in later commits (see git log / README). Kept here as a record of
+> where the project started, not as a current punch list.
 
 **Scope:** every source file in the repository at commit `cb5994a` — `manifest.json`, `background.js`, `energyscore.js`, `storage.js`, `popup.js/.html/.css`, `analytics.js`, `history.js/.html`, `companion/main.go`, batch/module files, README, and git history.
 

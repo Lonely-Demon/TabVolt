@@ -130,6 +130,35 @@ func queryCPUTemp() (float64, string) {
 	return (raw / 10.0) - 273.15, "acpi_thermal_zone"
 }
 
+// gpuEngineRow is one row of Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine.
+type gpuEngineRow struct {
+	name    string
+	utilPct float64
+}
+
+// gpu3DEngineSuffix is the fixed suffix WMI appends to every 3D-engine
+// instance name (one per process actively using Direct3D on that engine),
+// e.g. "pid_1234_luid_0x...  _phys_0_eng_0_engtype_3D".
+const gpu3DEngineSuffix = "engtype_3d"
+
+// sumGPUEngineUtilization sums UtilizationPercentage across every row whose
+// instance name identifies it as a 3D engine, ignoring Copy/VideoDecode/
+// VideoEncode/etc. engines exposed by the same WMI class. Pure and WMI-free
+// so it's unit-testable (see main_test.go) — same pattern as
+// aggregateBrowserProcesses below, and for the same reason: see that
+// function's comment for why the filtering happens here instead of in the
+// WQL WHERE clause.
+func sumGPUEngineUtilization(rows []gpuEngineRow) (totalPct float64, matched int) {
+	for _, r := range rows {
+		if !strings.HasSuffix(strings.ToLower(r.name), gpu3DEngineSuffix) {
+			continue
+		}
+		totalPct += r.utilPct
+		matched++
+	}
+	return totalPct, matched
+}
+
 // queryIGPU uses WMI Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine.
 // Must be called from a thread with COM initialized.
 func queryIGPU() float64 {
@@ -140,8 +169,11 @@ func queryIGPU() float64 {
 	}
 	defer svc.Release()
 
+	// No WHERE clause — see queryBrowserTotals for why WQL filtering
+	// against this same family of synthetic Perf classes isn't trusted
+	// here. Fetch every GPU engine instance and filter client-side.
 	result, err := oleutil.CallMethod(svc, "ExecQuery",
-		`SELECT UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine WHERE Name LIKE "%engtype_3D"`)
+		"SELECT Name, UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine")
 	if err != nil {
 		log.Printf("[igpu] ExecQuery failed: %v", err)
 		return -1.0
@@ -156,23 +188,36 @@ func queryIGPU() float64 {
 	}
 	count := int(countVar.Val)
 	if count == 0 {
+		log.Println("[igpu] WMI returned zero GPU engine instances total — no GPU scheduler (WDDM) perf counters on this system?")
 		return -1.0
 	}
 
-	var totalUtil float64
+	rows := make([]gpuEngineRow, 0, count)
 	for i := 0; i < count; i++ {
 		item, err := oleutil.CallMethod(resultDisp, "ItemIndex", i)
 		if err != nil {
 			continue
 		}
 		itemDisp := item.ToIDispatch()
-		utilVal, err := oleutil.GetProperty(itemDisp, "UtilizationPercentage")
-		if err == nil {
-			totalUtil += toFloat64(utilVal)
+
+		nameVal, _ := oleutil.GetProperty(itemDisp, "Name")
+		utilVal, _ := oleutil.GetProperty(itemDisp, "UtilizationPercentage")
+
+		name := ""
+		if nameVal != nil {
+			if s, ok := nameVal.Value().(string); ok {
+				name = s
+			}
 		}
+		rows = append(rows, gpuEngineRow{name: name, utilPct: toFloat64(utilVal)})
 		itemDisp.Release()
 	}
-	return totalUtil
+
+	total, matched := sumGPUEngineUtilization(rows)
+	if matched == 0 {
+		log.Printf("[igpu] %d GPU engine instances total, none were 3D engines", count)
+	}
+	return total
 }
 
 // browserProcessNamePrefix matches every instance WMI reports for the
@@ -192,6 +237,15 @@ type processRow struct {
 // every row belonging to the browser, giving its real total system-wide
 // footprint instead of an assumed percentage. Pure and WMI-free so it's
 // unit-testable without Windows (see main_test.go).
+//
+// The matching happens here, in Go, rather than in the WQL WHERE clause
+// queryBrowserTotals sends to WMI: server-side `LIKE` filtering against
+// Win32_PerfFormattedData_* classes (synthetic "cooked" performance
+// classes, not real CIM instances) is unreliable across Windows
+// versions/providers and has been observed to silently return zero rows
+// instead of filtering — the class-level query without a WHERE clause is
+// the one part that's dependable, so that's the only thing WMI is asked
+// to do.
 func aggregateBrowserProcesses(rows []processRow) (cpuPct float64, memBytes float64, matched int) {
 	for _, r := range rows {
 		if !strings.HasPrefix(strings.ToLower(r.name), browserProcessNamePrefix) {
@@ -218,7 +272,7 @@ func queryBrowserTotals() (cpuPct float64, memMB float64, ok bool) {
 	defer svc.Release()
 
 	result, err := oleutil.CallMethod(svc, "ExecQuery",
-		`SELECT Name, PercentProcessorTime, WorkingSetPrivate FROM Win32_PerfFormattedData_PerfProc_Process WHERE Name LIKE "chrome%"`)
+		"SELECT Name, PercentProcessorTime, WorkingSetPrivate FROM Win32_PerfFormattedData_PerfProc_Process")
 	if err != nil {
 		log.Printf("[browser] ExecQuery failed: %v", err)
 		return -1, -1, false
@@ -233,7 +287,7 @@ func queryBrowserTotals() (cpuPct float64, memMB float64, ok bool) {
 	}
 	count := int(countVar.Val)
 	if count == 0 {
-		log.Println("[browser] No chrome.exe processes found")
+		log.Println("[browser] WMI returned zero process instances total — the Process performance counter category may be disabled on this machine. Try running `lodctr /r` in an elevated command prompt to rebuild it, then restart the companion.")
 		return -1, -1, false
 	}
 
@@ -265,6 +319,7 @@ func queryBrowserTotals() (cpuPct float64, memMB float64, ok bool) {
 
 	totalCPU, totalMemBytes, matched := aggregateBrowserProcesses(rows)
 	if matched == 0 {
+		log.Printf("[browser] %d process instances total, none named %q — is the browser installed under a different process name?", count, browserProcessNamePrefix)
 		return -1, -1, false
 	}
 	return totalCPU, totalMemBytes / 1048576, true

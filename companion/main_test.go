@@ -65,3 +65,36 @@ func TestAggregateBrowserProcesses(t *testing.T) {
 		}
 	})
 }
+
+func TestSumGPUEngineUtilization(t *testing.T) {
+	t.Run("no rows", func(t *testing.T) {
+		total, n := sumGPUEngineUtilization(nil)
+		if total != 0 || n != 0 {
+			t.Fatalf("got (%v, %v), want (0, 0)", total, n)
+		}
+	})
+
+	t.Run("sums only 3D engine instances, case-insensitively", func(t *testing.T) {
+		rows := []gpuEngineRow{
+			{name: "pid_1234_luid_0x0_0xABCD_phys_0_eng_0_engtype_3D", utilPct: 12.5},
+			{name: "pid_5678_luid_0x0_0xABCD_phys_0_eng_1_ENGTYPE_3D", utilPct: 3.0},
+			{name: "pid_1234_luid_0x0_0xABCD_phys_0_eng_2_engtype_Copy", utilPct: 40.0},
+			{name: "pid_1234_luid_0x0_0xABCD_phys_0_eng_3_engtype_VideoDecode", utilPct: 5.0},
+		}
+		total, n := sumGPUEngineUtilization(rows)
+		if n != 2 {
+			t.Fatalf("matched = %d, want 2 (only the 3D engine rows)", n)
+		}
+		if total != 15.5 {
+			t.Fatalf("total = %v, want 15.5 — a non-3D engine leaked into the sum", total)
+		}
+	})
+
+	t.Run("ignores engines that merely end differently", func(t *testing.T) {
+		rows := []gpuEngineRow{{name: "pid_1_eng_0_engtype_3DSomethingElse", utilPct: 99.0}}
+		_, n := sumGPUEngineUtilization(rows)
+		if n != 0 {
+			t.Fatalf("matched = %d, want 0 — suffix must be exact, not a prefix match", n)
+		}
+	})
+}
